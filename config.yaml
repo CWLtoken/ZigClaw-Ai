@@ -1,0 +1,5 @@
+github:
+  remote_owner: CWLtoken
+  remote_repo: BitClaw-Ai
+  inherit_permissions_from: ~/.hermes/config.yaml
+  token_source: env
