@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+    branches: [ main, develop, phase0 ]
+  pull_request:
+    branches: [ main, develop, phase0 ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run tests
+        run: |
+          if [ -f pytest.ini ] || [ -f setup.cfg ]; then pytest; else echo "No tests configured"; fi
