@@ -1,0 +1,21 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Build / cache
+target/
+out/
+node_modules/
+__pycache__/
+*.pyc
+
+# Env
+.env
+*.env.local
+
+# Logs
+*.log
+logs/
