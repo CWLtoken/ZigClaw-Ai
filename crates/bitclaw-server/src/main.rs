@@ -13,8 +13,9 @@ fn main() {
     unsafe {
         let result_default = execute_agent_default(42, std::ptr::null_mut());
         println!("execute_agent_default returned: {}", result_default);
-        
-        let result_explicit = execute_agent_explicit(42, std::ptr::null_mut(), std::ptr::null_mut());
+
+        let result_explicit =
+            execute_agent_explicit(42, std::ptr::null_mut(), std::ptr::null_mut());
         println!("execute_agent_explicit returned: {}", result_explicit);
     }
 }
