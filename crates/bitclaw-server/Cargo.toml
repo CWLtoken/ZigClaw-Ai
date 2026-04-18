@@ -2,3 +2,13 @@
 name = "bitclaw-bitclaw-server"
 version = "0.1.0"
 edition = "2021"
+
+[dependencies]
+bitclaw-bitclaw-common = { path = "../bitclaw-bitclaw-common" }
+
+[build-dependencies]
+bindgen = "0.69"
+
+[package.metadata]
+rustc-link-search = ["native=zig/zig-out/lib"]
+rustc-link-lib = ["static=agent_rt"]

@@ -1,10 +1,10 @@
 [workspace]
+resolver = "2"
 members = [
-    "crates/bitclaw-common",
+    "crates/bitclaw-bitclaw-common",
+    "crates/bitclaw-observer",
     "crates/bitclaw-orchestration",
     "crates/bitclaw-router",
     "crates/bitclaw-storage",
-    "crates/bitclaw-observer",
     "crates/bitclaw-server",
 ]
-resolver = "2"
