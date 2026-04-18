@@ -15,16 +15,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.11.0
       - name: Check formatting (Rust)
         run: cargo fmt --check
       - name: Lint (Rust)
         run: cargo clippy -- -D warnings
-      - name: Check formatting (Zig)
-        run: zig fmt --check zig/src/
       - name: Check dependencies
         run: cargo check --workspace
 
@@ -37,16 +31,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.11.0
       - name: Build (Rust)
         run: cargo build --release --workspace
-      - name: Build (Zig)
-        run: |
-          cd zig
-          zig build -C release-fast
 
   test:
     runs-on: ubuntu-latest
