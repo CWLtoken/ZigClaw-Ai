@@ -24,7 +24,7 @@ jobs:
       - name: Lint (Rust)
         run: cargo clippy -- -D warnings
       - name: Check formatting (Zig)
-        run: zig fmt --check
+        run: zig fmt --check zig/src/
       - name: Check dependencies
         run: cargo check --workspace
 
@@ -44,7 +44,7 @@ jobs:
       - name: Build (Rust)
         run: cargo build --release --workspace
       - name: Build (Zig)
-        run: zig build
+        run: zig build -C release-fast
 
   test:
     runs-on: ubuntu-latest
