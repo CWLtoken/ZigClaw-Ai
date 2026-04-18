@@ -44,7 +44,9 @@ jobs:
       - name: Build (Rust)
         run: cargo build --release --workspace
       - name: Build (Zig)
-        run: zig build -C release-fast
+        run: |
+          cd zig
+          zig build -C release-fast
 
   test:
     runs-on: ubuntu-latest
