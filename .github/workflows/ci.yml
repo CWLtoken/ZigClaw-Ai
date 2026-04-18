@@ -33,6 +33,12 @@ jobs:
           toolchain: stable
       - name: Build (Rust)
         run: cargo build --release --workspace
+      - name: Setup CMake
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Configure CMake
+        run: cmake -S . -B build
+      - name: Build (CMake)
+        run: cmake --build build
 
   test:
     runs-on: ubuntu-latest
