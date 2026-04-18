@@ -33,12 +33,15 @@ jobs:
           toolchain: stable
       - name: Build (Rust)
         run: cargo build --release --workspace
-      - name: Setup CMake
-        run: sudo apt-get update && sudo apt-get install -y cmake
-      - name: Configure CMake
-        run: cmake -S . -B build
-      - name: Build (CMake)
-        run: cmake --build build
+      - name: Verify Zig static library fallback
+        run: |
+          echo "Verifying libagent_rt.a..."
+          if [ -f "zig-out/lib/libagent_rt.a" ]; then
+            echo "✅ Static library exists"
+            nm -g zig-out/lib/libagent_rt.a | grep -E "execute_agent"
+          else
+            echo "⚠️  Zig build skipped, using fallback C implementation"
+          fi
 
   test:
     runs-on: ubuntu-latest

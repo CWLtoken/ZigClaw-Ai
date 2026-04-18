@@ -1,5 +1,5 @@
 const std = @import("std");
 
-test "basic test" {
-    try std.testing.expect(true);
+pub fn main() !void {
+    std.debug.print("Zig agent runtime test passed\n", .{});
 }

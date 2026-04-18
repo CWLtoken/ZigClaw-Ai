@@ -1,12 +1,20 @@
-// Zig build configuration for BitClaw AI Agent Runtime
-// Note: Requires Zig 0.11.x. For Zig 0.16+, update API calls accordingly.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // Placeholder build configuration
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    
-    // Agent runtime library would be built here
-    // _ = b.addStaticLibrary(.{...});
+
+    // Build agent runtime static library
+    const lib = b.addStaticLibrary(.{
+        .name = "agent_rt",
+        .root_source_file = b.path("src/agent.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    b.installArtifact(lib);
+
+    // Verify with nm
+    const verify_step = b.step("verify", "Verify exported symbols");
+    const verify_cmd = b.addSystemCommand(&.{ "nm", "-g", lib.getOutputLibPath() });
+    verify_step.dependOn(&verify_cmd.step);
 }
