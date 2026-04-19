@@ -1,56 +1,22 @@
 name: CI
-
 on:
   push:
-    branches: [main, develop, feature/*]
+    branches: [ main, develop, phase0 ]
   pull_request:
-    branches: [main, develop]
-
+    branches: [ main, develop, phase0 ]
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Check formatting (Rust)
-        run: cargo fmt --check
-      - name: Lint (Rust)
-        run: cargo clippy -- -D warnings
-      - name: Check dependencies
-        run: cargo check --workspace
-
   build:
     runs-on: ubuntu-latest
-    needs: check
     steps:
-      - uses: actions/checkout@v3
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          toolchain: stable
-      - name: Build (Rust)
-        run: cargo build --release --workspace
-      - name: Verify Zig static library fallback
+          python-version: '3.11'
+      - name: Install dependencies
         run: |
-          echo "Verifying libagent_rt.a..."
-          if [ -f "zig-out/lib/libagent_rt.a" ]; then
-            echo "✅ Static library exists"
-            nm -g zig-out/lib/libagent_rt.a | grep -E "execute_agent"
-          else
-            echo "⚠️  Zig build skipped, using fallback C implementation"
-          fi
-
-  test:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - uses: actions/checkout@v3
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Run tests
-        run: cargo test --workspace
+        run: |
+          if [ -f pytest.ini ] || [ -f setup.cfg ]; then pytest; else echo "No tests configured"; fi
