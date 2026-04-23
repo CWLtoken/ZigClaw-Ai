@@ -166,4 +166,24 @@ pub const Syscall = struct {
         }
         return @ptrFromInt(ptr);
     }
+    // ZC-3-02: io_uring_enter 系统调用降维
+    // 功能：提交 SQ 条目给内核，并等待 CQ 完成
+    // 参数：fd, to_submit, min_complete, flags, sig(optional)
+    // 返回：成功时消耗的 CQE 数量，失败时 -errno
+    pub fn enter(fd: i32, to_submit: u32, min_complete: u32, flags: u32) i32 {
+        // 直接敲击 426 号门牌 (x86_64 io_uring_enter)，绕过标准库封装
+        const rc = std_os.syscall5(
+            .io_uring_enter,
+            @as(usize, @bitCast(fd)),
+            @as(usize, to_submit),
+            @as(usize, min_complete),
+            @as(usize, flags),
+            @as(usize, 0), // sig = null
+        );
+        // 系统调用错误返回：usize 值 >= -4096 (0xFFFFFFFFFFFFF001)
+        if (rc > @as(usize, @bitCast(@as(isize, -4095)))) {
+            std_process.exit(1); // 阶段2 裸金属死亡策略
+        }
+        return @truncate(i32, rc);
+    }
 };

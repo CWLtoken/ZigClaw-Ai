@@ -18,6 +18,11 @@ pub const Reactor = struct {
         return .{ .ring = ring };
     }
 
+    // ZC-3-02: 提交 SQ 给内核，等待 CQ 完成
+    pub fn submit(self: *Reactor, to_submit: u32, min_complete: u32) i32 {
+        return io_uring.Syscall.enter(self.ring.fd, to_submit, min_complete, 0);
+    }
+
     pub fn poll(self: *Reactor) Event {
         // real io_uring: application reads CQ only
         const cq_head = @atomicLoad(u32, self.ring.cq_head, .acquire);
