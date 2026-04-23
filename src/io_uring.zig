@@ -99,6 +99,15 @@ pub const Ring = struct {
         };
     }
 };
+
+// === 阶段 3：user_data 编码架构 ===
+// IoRequest 作为 user_data 的编码载体
+// 提交 SQE 时：user_data = @intFromPtr(&io_req)
+// 收到 CQE 时：io_req = @as(*IoRequest, @ptrFromInt(cqe.user_data))
+pub const IoRequest = struct {
+    stream_id: u64,
+    buf_ptr: ?*anyopaque,
+};
 // === ZC-1-02/04 终极修正：纯 syscall 降维层 ===
 const std_os = @import("std").os.linux;
 const std_process = @import("std").process;

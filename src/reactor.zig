@@ -31,11 +31,13 @@ pub const Reactor = struct {
         // advance CQ head, notify kernel this CQE is consumed
         @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
 
+        // ZC-2-04: decode user_data as *IoRequest (stage 3 architecture)
+        const req = @as(*io_uring.IoRequest, @ptrFromInt(cqe.user_data));
         return Event{
             .IoComplete = .{
-                .user_data = cqe.user_data,
+                .user_data = req.stream_id,
                 .result = @as(u32, @bitCast(cqe.res)),
-                .buf_ptr = if (cqe.user_data == 0) null else @as(?*anyopaque, @ptrFromInt(cqe.user_data)),
+                .buf_ptr = req.buf_ptr,
             },
         };
     }
