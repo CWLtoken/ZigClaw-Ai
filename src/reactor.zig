@@ -35,7 +35,7 @@ pub const Reactor = struct {
             .IoComplete = .{
                 .user_data = cqe.user_data,
                 .result = @as(u32, @bitCast(cqe.res)),
-                .buf_ptr = null, // WARNING: phase 2 severed limb, CQE returns no pointer
+                .buf_ptr = if (cqe.user_data == 0) null else @as(?*anyopaque, @ptrFromInt(cqe.user_data)),
             },
         };
     }

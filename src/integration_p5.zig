@@ -22,6 +22,10 @@ test "Phase5: 真实物理内存搬运 - 血管已打通，血肉注入" {
     var window = storage.StreamWindow.init();
     window.push_header(test_header);
 
+    // fake body chunk，让第二个 CQE 的 user_data 能存指针
+    var fake_body_chunk: [64]u8 align(64) = undefined;
+    @memset(&fake_body_chunk, 0xBB);
+
     // 伪造 CQ ring（存于堆栈，取地址传给 ring）
     var cq_ring: [16]io_uring.CqEntry = undefined;
     var cq_head: u32 = 0;
@@ -36,8 +40,9 @@ test "Phase5: 真实物理内存搬运 - 血管已打通，血肉注入" {
     proto.reactor.ring.cq_tail = &cq_tail;
 
     // 写 fake CQE 1: header 读取完成
+    // user_data 存指针（阶段2 hack：让 buf_ptr 能从 user_data 解码）
     cq_ring[0] = .{
-        .user_data = TEST_STREAM_ID,
+        .user_data = @intFromPtr(&test_header),
         .res = 12,
         .flags = 0,
     };
@@ -52,8 +57,9 @@ test "Phase5: 真实物理内存搬运 - 血管已打通，血肉注入" {
             got_complete += 1;
             // 第一次完成：写入第二个 fake CQE (body chunk)
             if (got_complete == 1) {
+                // 第二个 CQE：body chunk 完成，user_data 存指针
                 cq_ring[1] = .{
-                    .user_data = TEST_STREAM_ID + 1,
+                    .user_data = @intFromPtr(&fake_body_chunk),
                     .res = 64,
                     .flags = 0,
                 };
