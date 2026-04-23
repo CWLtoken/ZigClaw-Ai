@@ -281,9 +281,44 @@ pub const Syscall = struct {
     /// opcode 0 = IORING_REGISTER_BUFFERS（技术债：opcode 命名待修正）
     pub fn register(fd: u32, opcode: u32, arg: usize, nr_args: u32) SyscallError!void {
         const rc = std_os.syscall4(.io_uring_register, @as(usize, fd), @as(usize, opcode), arg, @as(usize, nr_args));
-        const result: i32 = @intCast(rc);
-        if (result < 0) {
+        // io_uring_register 成功返回 0，失败返回负 errno（作为大 usize）
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
             return SyscallError.RegisterFailed;
         }
     }
+
+    /// ZC-6-01: 固定缓冲区池注册/注销
+    pub const IORING_REGISTER_BUFFERS: u32 = 0;
+    pub const IORING_UNREGISTER_BUFFERS: u32 = 1;
+
+    /// 注册固定缓冲区池，成功后内核直接通过 buf_index 访问
+    pub fn register_buffers(fd: u32, iovecs: [*]const Iovec, nr: u32) SyscallError!void {
+        const rc = std_os.syscall4(
+            .io_uring_register,
+            @as(usize, fd),
+            @as(usize, IORING_REGISTER_BUFFERS),
+            @intFromPtr(iovecs),
+            @as(usize, nr),
+        );
+        // io_uring_register 成功返回 0，失败返回负 errno（作为大 usize）
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
+            return SyscallError.RegisterFailed;
+        }
+    }
+
+    /// 注销固定缓冲区池，释放内核锁定
+    pub fn unregister_buffers(fd: u32) SyscallError!void {
+        const rc = std_os.syscall4(
+            .io_uring_register,
+            @as(usize, fd),
+            @as(usize, IORING_UNREGISTER_BUFFERS),
+            0,
+            0,
+        );
+        // io_uring_register 成功返回 0，失败返回负 errno（作为大 usize）
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
+            return SyscallError.RegisterFailed;
+        }
+    }
+
 };
