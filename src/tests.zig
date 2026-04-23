@@ -9,9 +9,13 @@
 const p3 = @import("integration_p3.zig");
 const p4 = @import("integration_p4.zig");
 const p5 = @import("integration_p5.zig");
+const p6 = @import("integration_p6.zig");
+const p7 = @import("integration_p7.zig");
 
 comptime {
     _ = p3;
     _ = p4;
     _ = p5;
+    _ = p6;
+    _ = p7;
 }

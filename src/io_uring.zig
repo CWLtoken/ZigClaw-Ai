@@ -6,9 +6,16 @@ pub const SQ_DEPTH = 1024;
 pub const SQ_MASK = SQ_DEPTH - 1;
 
 pub const IOOp = enum(u8) {
-    Read = 0,
-    Write = 1,
-    NOP = 3, // IORING_OP_NOP: 空操作，用于测试
+    NOP = 0,           // IORING_OP_NOP
+    ReadV = 1,         // IORING_OP_READV
+    WriteV = 2,        // IORING_OP_WRITEV
+    FSync = 3,         // IORING_OP_FSYNC
+    ReadFixed = 4,     // IORING_OP_READ_FIXED
+    WriteFixed = 5,    // IORING_OP_WRITE_FIXED
+    PollAdd = 6,       // IORING_OP_POLL_ADD
+    PollRemove = 7,    // IORING_OP_POLL_REMOVE
+    Read = 22,         // IORING_OP_READ
+    Write = 23,        // IORING_OP_WRITE
 };
 
 // === 阶段 2：内核 UAPI 1:1 内存镜像 ===
@@ -47,11 +54,22 @@ comptime {
     if (@sizeOf(CqEntry) != 16) @compileError("ZC-FATAL: CqEntry must be exactly 16 bytes");
 }
 
+/// 严格映射 Linux 内核 struct iovec (16 bytes)
+pub const Iovec = extern struct {
+    iov_base: [*]u8,
+    iov_len: usize,
+};
+
+comptime {
+    if (@sizeOf(Iovec) != 16) @compileError("ZC-FATAL: Iovec must be exactly 16 bytes");
+}
+
 pub const Ring = struct {
     fd: u32,
     sq_head: *u32,
     sq_tail: *u32,
     sq_ring_mask: u32,
+    sq_array: [*]u32,      // SQ 索引数组：sq_array[idx] = sqe_index
     sq_entries: [*]SqEntry, // 改动：SubmissionEntry -> SqEntry
     cq_head: *u32,
     cq_tail: *u32,
@@ -77,28 +95,28 @@ pub const Ring = struct {
         const cq_ring_size: usize = (cq_ring_size_raw + PAGE - 1) & ~(PAGE - 1);
         const sq_ptr = Syscall.map_ring(fd, 0, sq_ring_size);
         const cq_ptr = Syscall.map_ring(fd, sq_ring_size, cq_ring_size);
-        // 阶段 2 修正：SQE 数组改为用户态分配 + io_uring_register 注册
-        // 内核 5.19+ 推荐此方式：零拷贝，内核直接读写用户态内存
-        // 使用 syscall6 直接调用 mmap，绕过 Zig 0.16 packed struct 类型限制
+        // SQE 数组独立 mmap：偏移量 IORING_OFF_SQES = 0x10000000
+        // 必须用 MAP_SHARED（内核共享），不能用 MAP_POPULATE（SQE 会 segfault）
+        // 注意：MAP_POPULATE=0x8000，0x20000 实际是 MAP_HUGETLB（会导致大页映射失败）
         const sqes_raw = std_os.syscall6(
             .mmap,
             @as(usize, 0), // addr = NULL
             sqes_size,
             @as(usize, 0x03), // PROT_READ | PROT_WRITE
-            @as(usize, 0x22), // MAP_PRIVATE | MAP_ANONYMOUS
-            ~@as(usize, 0), // fd = -1 (全1位模式)
-            @as(usize, 0), // offset = 0
+            @as(usize, 0x01), // MAP_SHARED only（SQE 禁用 MAP_POPULATE）
+            @as(usize, @intCast(@as(u32, @bitCast(fd)))),
+            @as(usize, 0x10000000), // IORING_OFF_SQES
         );
         if (sqes_raw == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED
             std_process.exit(1);
         }
         const sqes_aligned = @as([*]SqEntry, @ptrFromInt(sqes_raw));
-        _ = Syscall.register(fd, 0, @intFromPtr(sqes_aligned), params.sq_entries);
         const sq_base: [*]u8 = @ptrCast(@as(?*anyopaque, sq_ptr));
         const sq_head_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.head));
         const sq_tail_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.tail));
         const sq_mask_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.ring_mask));
         const sq_mask = sq_mask_ptr.*;
+        const sq_array_ptr: [*]u32 = @ptrCast(@alignCast(sq_base + params.sq_off.array));
         const cq_base: [*]u8 = @ptrCast(@as(?*anyopaque, cq_ptr));
         const cq_head_ptr: *u32 = @ptrCast(@alignCast(cq_base + params.cq_off.head));
         const cq_tail_ptr: *u32 = @ptrCast(@alignCast(cq_base + params.cq_off.tail));
@@ -109,6 +127,7 @@ pub const Ring = struct {
             .sq_head = sq_head_ptr,
             .sq_tail = sq_tail_ptr,
             .sq_ring_mask = sq_mask,
+            .sq_array = sq_array_ptr,
             .sq_entries = sqes_aligned,
             .cq_head = cq_head_ptr,
             .cq_tail = cq_tail_ptr,
@@ -166,7 +185,8 @@ pub const Syscall = struct {
     }
     pub fn map_ring(fd: u32, offset: usize, size: usize) ?*anyopaque {
         // 强制预分配物理页，拒绝缺页中断
-        const flags: usize = 0x01 | 0x20000; // MAP_SHARED | MAP_POPULATE (Linux x86_64 UAPI)
+        // Linux x86_64 UAPI: MAP_SHARED=0x01, MAP_POPULATE=0x8000
+        const flags: usize = 0x01 | 0x8000; // MAP_SHARED | MAP_POPULATE
         const prot: usize = 0x1 | 0x2; // PROT_READ | PROT_WRITE (Linux x86_64 UAPI)
         
         // 使用 syscall6 绕过 std.os.mmap，直接映射
@@ -204,6 +224,26 @@ pub const Syscall = struct {
 
     pub fn close(fd: u32) void {
         _ = std_os.syscall1(.close, @as(usize, fd));
+    }
+
+    /// Linux UAPI 常量
+    pub const AT_FDCWD: usize = 0xFFFFFFFFFFFFFF9C; // -100 sign-extended to 64-bit
+    pub const O_RDONLY: u32 = 0;
+
+    /// openat(dirfd, pathname, flags, mode) — 打开文件，返回 fd
+    pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, mode: u32) i32 {
+        const rc = std_os.syscall4(
+            .openat,
+            @as(usize, @bitCast(@as(i64, dirfd))),
+            @intFromPtr(path),
+            @as(usize, flags),
+            @as(usize, mode),
+        );
+        const result: i32 = @intCast(rc);
+        if (result < 0) {
+            std_process.exit(1);
+        }
+        return result;
     }
 
     /// io_uring_register(fd, opcode, arg, nr_args)
