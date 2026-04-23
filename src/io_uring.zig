@@ -70,14 +70,29 @@ pub const Ring = struct {
         const fd: u32 = @intCast(fd_i32); // setup 成功时返回值 >= 0，安全转换
         const sq_ring_size_raw: usize = params.sq_off.array + (params.sq_entries * @sizeOf(u32));
         const cq_ring_size_raw: usize = params.cq_off.cqes + (params.cq_entries * 16);
-        const sqes_size: usize = params.sq_entries * 64;
-        // 内核 mmap 偏移量必须是 PAGE_SIZE 整数倍，强制向上取整
+// 内核 mmap 偏移量必须是 PAGE_SIZE 整数倍，强制向上取整
         const PAGE: usize = 4096;
         const sq_ring_size: usize = (sq_ring_size_raw + PAGE - 1) & ~(PAGE - 1);
         const cq_ring_size: usize = (cq_ring_size_raw + PAGE - 1) & ~(PAGE - 1);
         const sq_ptr = Syscall.map_ring(fd, 0, sq_ring_size);
         const cq_ptr = Syscall.map_ring(fd, sq_ring_size, cq_ring_size);
-        const sqes_ptr = Syscall.map_ring(fd, sq_ring_size + cq_ring_size, sqes_size);
+        // ZC-3-05: 用户空间分配 SQE 数组（64字节对齐），然后注册给内核
+        // 用 mmap Anonymous 分配 2MB（足够大且 2MB 对齐），然后手动对齐到 64 字节
+        const ALLOC_SIZE: usize = 2 * 1024 * 1024; // 2MB
+        const raw_ptr = std_os.syscall6(
+            .mmap,
+            @as(usize, 0),
+            ALLOC_SIZE,
+            @as(usize, 0x3), // PROT_READ | PROT_WRITE
+            @as(usize, 0x02), // MAP_PRIVATE | MAP_ANONYMOUS
+            @as(usize, @as(u32, @bitCast(@as(i32, -1)))),
+            @as(usize, 0),
+        );
+        if (raw_ptr > 0x7FFFFFFFFFFF) { std_process.exit(1); }
+        // 2MB 映射保证 64 字节对齐，直接使用
+        const sqes_ptr: ?*anyopaque = @ptrFromInt(raw_ptr);
+        // ZC-3-05: 注册 SQE 数组给内核 (IORING_REGISTER_SQES = 0)
+        _ = Syscall.register(fd, 0, sqes_ptr, @as(u32, @truncate(params.sq_entries)));
         const sq_base: [*]u8 = @ptrCast(@as(?*anyopaque, sq_ptr));
         const sq_head_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.head));
         const sq_tail_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.tail));
@@ -168,20 +183,37 @@ pub const Syscall = struct {
         }
         return @ptrFromInt(ptr);
     }
+    // ZC-3-04: IORING_ENTER_GETEVENTS 标志修复
+    // 当 min_complete > 0 时，必须设置 GETEVENTS 标志，否则 enter() 不会阻塞等待
     pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) i32 {
+        const actual_flags: u32 = if (min_complete > 0) flags | 0x01 else flags;
         // 直接敲击 426 号门牌 (x86_64 io_uring_enter)
         const rc = std_os.syscall5(
             .io_uring_enter,
             @as(usize, fd),
             @as(usize, to_submit),
             @as(usize, min_complete),
-            @as(usize, flags),
+            @as(usize, actual_flags),
             @as(usize, 0),
         );
         // 系统调用错误返回：usize 值 >= -4096
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
             std_process.exit(1);
         }
+        return @intCast(rc);
+    }
+
+    // ZC-3-05: io_uring_register 系统调用 (nr=427)
+    // 用于注册 SQE 数组 (IORING_REGISTER_SQES)
+    pub fn register(fd: u32, opcode: u32, arg: ?*anyopaque, nr_args: u32) i32 {
+        const rc = std_os.syscall4(
+            .io_uring_register,
+            @as(usize, fd),
+            @as(usize, opcode),
+            @as(usize, @intFromPtr(arg)),
+            @as(usize, nr_args),
+        );
+        if (rc > 0x7FFFFFFFFFFF) { std_process.exit(1); } // error
         return @intCast(rc);
     }
 
