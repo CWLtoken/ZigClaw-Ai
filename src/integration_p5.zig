@@ -1,132 +1,69 @@
 // src/integration_p5.zig
-// ZigClaw V2.4 Phase5 | 真实物理内存搬运测试 | 血管打通+血肉注入
+// ZigClaw V2.4 Phase5 | 单线程 + fake CQE | 暴露 buf_ptr=null 的伤口
 const std = @import("std");
 const testing = std.testing;
 const mem = std.mem;
-const Thread = std.Thread;
-const Io = std.Io;
-const Semaphore = Io.Semaphore;
 
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
+const reactor_mod = @import("reactor.zig");
 const protocol = @import("protocol.zig");
-
-const TEST_STREAM_ID: u64 = 42;
-const TEST_TOTAL_BODY_LEN: u32 = 100;
-const HEADER_DMA_LEN: u32 = 13;
-const BODY_CHUNK1_LEN: u32 = 40;
-const BODY_CHUNK2_LEN: u32 = 60;
 
 var test_body_pool = storage.BodyBufferPool.init();
 
-const TestContext = struct {
-    proto: *protocol.Protocol,
-    consumer_ready: Semaphore,
-    producer_done: Semaphore,
-    is_running: bool,
-    io: Io,
-};
+const TEST_STREAM_ID: u64 = 42;
 
 test "Phase5: 真实物理内存搬运 - 血管已打通，血肉注入" {
-    var window = storage.StreamWindow.init();
     var test_header = core.TokenStreamHeader.init();
     mem.writeInt(u64, test_header.data[0..8], TEST_STREAM_ID, .little);
-    mem.writeInt(u32, test_header.data[8..12], TEST_TOTAL_BODY_LEN, .little);
+    mem.writeInt(u32, test_header.data[8..12], 100, .little);
+
+    var window = storage.StreamWindow.init();
     window.push_header(test_header);
 
+    // 伪造 CQ ring（存于堆栈，取地址传给 ring）
+    var cq_ring: [16]io_uring.CqEntry = undefined;
+    var cq_head: u32 = 0;
+    var cq_tail: u32 = 0;
+
+    // 初始化 proto
     var proto = protocol.Protocol.init(&window, &test_body_pool);
-    var ctx = TestContext{
-        .proto = &proto,
-        .consumer_ready = .{},
-        .producer_done = .{},
-        .is_running = true,
-        .io = testing.io,
+
+    // 把 fake CQ 指针注入 reactor.ring
+    proto.reactor.ring.cqes = @as([*]io_uring.CqEntry, @ptrFromInt(@intFromPtr(&cq_ring)));
+    proto.reactor.ring.cq_head = &cq_head;
+    proto.reactor.ring.cq_tail = &cq_tail;
+
+    // 写 fake CQE 1: header 读取完成
+    cq_ring[0] = .{
+        .user_data = TEST_STREAM_ID,
+        .res = 12,
+        .flags = 0,
     };
+    cq_tail = 1;
 
-    const producer_thread = try Thread.spawn(.{}, producer_real_memory_loop, .{&ctx});
-    defer producer_thread.join();
+    var step_count: u32 = 0;
+    var got_complete: u32 = 0;
 
-    proto.begin_receive(TEST_STREAM_ID);
-    while (ctx.is_running) {
-        const state = proto.step();
-        switch (state) {
-            .Idle => {},
-            .HeaderRecv => {
-                ctx.consumer_ready.post(ctx.io);
-                ctx.producer_done.wait(ctx.io) catch {};
-            },
-            .BodyRecv => {
-                ctx.consumer_ready.post(ctx.io);
-                ctx.producer_done.wait(ctx.io) catch {};
-            },
-            .BodyDone => {
-                ctx.is_running = false;
-            },
-            .Error => |e| {
-                std.debug.panic("state machine error: {s}", .{e.reason});
-            },
+    while (step_count < 200) : (step_count += 1) {
+        const event = proto.reactor.poll();
+        if (event == .IoComplete) {
+            got_complete += 1;
+            // 第一次完成：写入第二个 fake CQE (body chunk)
+            if (got_complete == 1) {
+                cq_ring[1] = .{
+                    .user_data = TEST_STREAM_ID + 1,
+                    .res = 64,
+                    .flags = 0,
+                };
+                cq_tail = 2;
+            }
         }
+        _ = proto.step();
+        if (proto.state == .BodyDone) break;
     }
 
+    // 预期 FAIL：buf_ptr == null，解引用会 null pointer dereference
     try testing.expect(proto.state == .BodyDone);
-    const final_hdr = window.access_header(TEST_STREAM_ID).?;
-    const final_len = mem.readInt(u32, final_hdr.data[8..12], .little);
-    try testing.expectEqual(@as(u32, 0), final_len);
-
-    const slot_idx = @mod(TEST_STREAM_ID, 1024);
-    for (test_body_pool.buffers[slot_idx][0..40]) |b| {
-        try testing.expectEqual(@as(u8, 'A'), b);
-    }
-    for (test_body_pool.buffers[slot_idx][40..100]) |b| {
-        try testing.expectEqual(@as(u8, 'B'), b);
-    }
-
-    test_body_pool = storage.BodyBufferPool.init();
-}
-
-fn producer_real_memory_loop(ctx: *TestContext) !void {
-    ctx.consumer_ready.waitUncancelable(ctx.io);
-    const tail1 = @atomicLoad(u32, ctx.proto.reactor.ring.sq_tail, .acquire);
-    const idx1 = tail1 & io_uring.SQ_MASK;
-    ctx.proto.reactor.ring.sq_entries[idx1] = .{
-        .op_code = @intFromEnum(io_uring.IOOp.Read),
-        .fd = 0,
-        .buf_ptr = null,
-        .buf_len = HEADER_DMA_LEN,
-        .offset = 0,
-        .user_data = TEST_STREAM_ID,
-    };
-    @atomicStore(u32, ctx.proto.reactor.ring.sq_tail, tail1 + 1, .release);
-    ctx.producer_done.post(ctx.io);
-
-    ctx.consumer_ready.waitUncancelable(ctx.io);
-    const tail2 = @atomicLoad(u32, ctx.proto.reactor.ring.sq_tail, .acquire);
-    const idx2 = tail2 & io_uring.SQ_MASK;
-    var fake_body_chunk1 = [_]u8{'A'} ** BODY_CHUNK1_LEN;
-    ctx.proto.reactor.ring.sq_entries[idx2] = .{
-        .op_code = @intFromEnum(io_uring.IOOp.Read),
-        .fd = 0,
-        .buf_ptr = @as(?*anyopaque, @ptrCast(&fake_body_chunk1)),
-        .buf_len = BODY_CHUNK1_LEN,
-        .offset = 0,
-        .user_data = TEST_STREAM_ID,
-    };
-    @atomicStore(u32, ctx.proto.reactor.ring.sq_tail, tail2 + 1, .release);
-    ctx.producer_done.post(ctx.io);
-
-    ctx.consumer_ready.waitUncancelable(ctx.io);
-    const tail3 = @atomicLoad(u32, ctx.proto.reactor.ring.sq_tail, .acquire);
-    const idx3 = tail3 & io_uring.SQ_MASK;
-    var fake_body_chunk2 = [_]u8{'B'} ** BODY_CHUNK2_LEN;
-    ctx.proto.reactor.ring.sq_entries[idx3] = .{
-        .op_code = @intFromEnum(io_uring.IOOp.Read),
-        .fd = 0,
-        .buf_ptr = @as(?*anyopaque, @ptrCast(&fake_body_chunk2)),
-        .buf_len = BODY_CHUNK2_LEN,
-        .offset = 0,
-        .user_data = TEST_STREAM_ID,
-    };
-    @atomicStore(u32, ctx.proto.reactor.ring.sq_tail, tail3 + 1, .release);
-    ctx.producer_done.post(ctx.io);
 }

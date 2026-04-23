@@ -10,25 +10,52 @@ pub const IOOp = enum(u8) {
     Write = 1,
 };
 
-pub const SubmissionEntry = struct {
-    op_code: u8,
-    fd: u32,
-    buf_ptr: ?*anyopaque,
-    buf_len: u32,
-    offset: u64,
+// === 阶段 2：内核 UAPI 1:1 内存镜像 ===
+
+/// 严格映射 Linux 内核 struct io_uring_sqe (64 bytes)
+/// 禁止添加任何 Zig 级别的抽象字段，禁止改变顺序
+pub const SqEntry = extern struct {
+    opcode: u8,
+    flags: u8,
+    ioprio: u16,
+    fd: i32,
+    off: u64,
+    addr: u64,
+    len: u32,
+    __pad1: u32,
     user_data: u64,
+    buf_index: u16,
+    personality: u16,
+    splice_fd_in: u32,
+    addr3: u64,
+    __pad2: u64,
 };
+
+comptime {
+    if (@sizeOf(SqEntry) != 64) @compileError("ZC-FATAL: SqEntry must be exactly 64 bytes");
+}
+
+/// 严格映射 Linux 内核 struct io_uring_cqe (16 bytes)
+pub const CqEntry = extern struct {
+    user_data: u64,
+    res: i32,
+    flags: u32,
+};
+
+comptime {
+    if (@sizeOf(CqEntry) != 16) @compileError("ZC-FATAL: CqEntry must be exactly 16 bytes");
+}
 
 pub const Ring = struct {
     fd: i32,
     sq_head: *u32,
     sq_tail: *u32,
     sq_ring_mask: u32,
-    sq_entries: [*]SubmissionEntry,
+    sq_entries: [*]SqEntry, // 改动：SubmissionEntry -> SqEntry
     cq_head: *u32,
     cq_tail: *u32,
-    cq_ring_mask: u32,
-    cqes: ?*anyopaque,
+    cq_ring_mask: u32,      // 新增
+    cqes: [*]CqEntry,       // 改动：?*anyopaque -> [*]CqEntry
     pub fn init() Ring {
         var params = SetupParams{
             .sq_entries = 0, .cq_entries = 0, .flags = 0,
@@ -64,11 +91,11 @@ pub const Ring = struct {
             .sq_head = sq_head_ptr,
             .sq_tail = sq_tail_ptr,
             .sq_ring_mask = sq_mask,
-            .sq_entries = @as([*]SubmissionEntry, @ptrCast(@alignCast(@as(?*anyopaque, sqes_ptr)))),
+            .sq_entries = @as([*]SqEntry, @ptrCast(@alignCast(@as(?*anyopaque, sqes_ptr)))),
             .cq_head = cq_head_ptr,
             .cq_tail = cq_tail_ptr,
             .cq_ring_mask = cq_mask,
-            .cqes = cq_ptr,
+            .cqes = @as([*]CqEntry, @ptrCast(@alignCast(cq_base + params.cq_off.cqes))),
         };
     }
 };

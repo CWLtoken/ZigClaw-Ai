@@ -23,7 +23,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     {
         const idx = proto.reactor.ring.sq_tail.* & io_uring.SQ_MASK;
-        proto.reactor.ring.sq_entries[idx] = .{ .op_code = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .buf_ptr = null, .buf_len = 13, .offset = 0, .user_data = 99 };
+        proto.reactor.ring.sq_entries[idx] = .{ .opcode = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .addr = 0, .len = 13, .off = 0, .user_data = 99, .flags = 0, .ioprio = 0, .__pad1 = 0, .buf_index = 0, .personality = 0, .splice_fd_in = 0, .addr3 = 0, .__pad2 = 0 };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     const s1 = proto.step();
@@ -35,21 +35,21 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     {
         const idx = proto.reactor.ring.sq_tail.* & io_uring.SQ_MASK;
-        proto.reactor.ring.sq_entries[idx] = .{ .op_code = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .buf_ptr = null, .buf_len = 13, .offset = 0, .user_data = 42 };
+        proto.reactor.ring.sq_entries[idx] = .{ .opcode = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .addr = 0, .len = 13, .off = 0, .user_data = 42, .flags = 0, .ioprio = 0, .__pad1 = 0, .buf_index = 0, .personality = 0, .splice_fd_in = 0, .addr3 = 0, .__pad2 = 0 };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     try testing.expectEqual(protocol.State.BodyRecv, proto.step());
 
     {
         const idx = proto.reactor.ring.sq_tail.* & io_uring.SQ_MASK;
-        proto.reactor.ring.sq_entries[idx] = .{ .op_code = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .buf_ptr = null, .buf_len = 40, .offset = 0, .user_data = 42 };
+        proto.reactor.ring.sq_entries[idx] = .{ .opcode = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .addr = 0, .len = 40, .off = 0, .user_data = 42, .flags = 0, .ioprio = 0, .__pad1 = 0, .buf_index = 0, .personality = 0, .splice_fd_in = 0, .addr3 = 0, .__pad2 = 0 };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     try testing.expectEqual(protocol.State.BodyRecv, proto.step());
 
     {
         const idx = proto.reactor.ring.sq_tail.* & io_uring.SQ_MASK;
-        proto.reactor.ring.sq_entries[idx] = .{ .op_code = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .buf_ptr = null, .buf_len = 70, .offset = 0, .user_data = 42 };
+        proto.reactor.ring.sq_entries[idx] = .{ .opcode = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .addr = 0, .len = 70, .off = 0, .user_data = 42, .flags = 0, .ioprio = 0, .__pad1 = 0, .buf_index = 0, .personality = 0, .splice_fd_in = 0, .addr3 = 0, .__pad2 = 0 };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     const s4 = proto.step();
@@ -61,7 +61,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     {
         // 先通过 HeaderRecv：必须 result=13
         const idx_hdr = proto.reactor.ring.sq_tail.* & io_uring.SQ_MASK;
-        proto.reactor.ring.sq_entries[idx_hdr] = .{ .op_code = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .buf_ptr = null, .buf_len = 13, .offset = 0, .user_data = 42 };
+        proto.reactor.ring.sq_entries[idx_hdr] = .{ .opcode = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .addr = 0, .len = 13, .off = 0, .user_data = 42, .flags = 0, .ioprio = 0, .__pad1 = 0, .buf_index = 0, .personality = 0, .splice_fd_in = 0, .addr3 = 0, .__pad2 = 0 };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     try testing.expect(proto.step() == .BodyRecv);
@@ -69,7 +69,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     {
         // 再通过 BodyRecv：remaining=60, consumed=60 → new_len=0 → BodyDone
         const idx_body = proto.reactor.ring.sq_tail.* & io_uring.SQ_MASK;
-        proto.reactor.ring.sq_entries[idx_body] = .{ .op_code = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .buf_ptr = null, .buf_len = 60, .offset = 0, .user_data = 42 };
+        proto.reactor.ring.sq_entries[idx_body] = .{ .opcode = @intFromEnum(io_uring.IOOp.Read), .fd = 0, .addr = 0, .len = 60, .off = 0, .user_data = 42, .flags = 0, .ioprio = 0, .__pad1 = 0, .buf_index = 0, .personality = 0, .splice_fd_in = 0, .addr3 = 0, .__pad2 = 0 };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     try testing.expect(proto.step() == .BodyDone);
