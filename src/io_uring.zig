@@ -8,6 +8,7 @@ pub const SQ_MASK = SQ_DEPTH - 1;
 pub const IOOp = enum(u8) {
     Read = 0,
     Write = 1,
+    NOP = 3, // IORING_OP_NOP: 空操作，用于测试
 };
 
 // === 阶段 2：内核 UAPI 1:1 内存镜像 ===
@@ -47,7 +48,7 @@ comptime {
 }
 
 pub const Ring = struct {
-    fd: i32,
+    fd: u32,
     sq_head: *u32,
     sq_tail: *u32,
     sq_ring_mask: u32,
@@ -65,7 +66,8 @@ pub const Ring = struct {
             .cq_off = .{ .head = 0, .tail = 0, .ring_mask = 0, .ring_entries = 0, .overflow = 0, .cqes = 0, .flags = 0, .resv1 = 0, .user_addr = 0 },
         };
         
-        const fd = Syscall.setup(1024, &params);
+        const fd_i32 = Syscall.setup(1024, &params);
+        const fd: u32 = @intCast(fd_i32); // setup 成功时返回值 >= 0，安全转换
         const sq_ring_size_raw: usize = params.sq_off.array + (params.sq_entries * @sizeOf(u32));
         const cq_ring_size_raw: usize = params.cq_off.cqes + (params.cq_entries * 16);
         const sqes_size: usize = params.sq_entries * 64;
@@ -146,7 +148,7 @@ pub const Syscall = struct {
         }
         return fd;
     }
-    pub fn map_ring(fd: i32, offset: usize, size: usize) ?*anyopaque {
+    pub fn map_ring(fd: u32, offset: usize, size: usize) ?*anyopaque {
         // 强制预分配物理页，拒绝缺页中断
         const flags: usize = 0x01 | 0x20000; // MAP_SHARED | MAP_POPULATE (Linux x86_64 UAPI)
         const prot: usize = 0x1 | 0x2; // PROT_READ | PROT_WRITE (Linux x86_64 UAPI)
@@ -166,24 +168,24 @@ pub const Syscall = struct {
         }
         return @ptrFromInt(ptr);
     }
-    // ZC-3-02: io_uring_enter 系统调用降维
-    // 功能：提交 SQ 条目给内核，并等待 CQ 完成
-    // 参数：fd, to_submit, min_complete, flags, sig(optional)
-    // 返回：成功时消耗的 CQE 数量，失败时 -errno
-    pub fn enter(fd: i32, to_submit: u32, min_complete: u32, flags: u32) i32 {
-        // 直接敲击 426 号门牌 (x86_64 io_uring_enter)，绕过标准库封装
+    pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) i32 {
+        // 直接敲击 426 号门牌 (x86_64 io_uring_enter)
         const rc = std_os.syscall5(
             .io_uring_enter,
-            @as(usize, @bitCast(fd)),
+            @as(usize, fd),
             @as(usize, to_submit),
             @as(usize, min_complete),
             @as(usize, flags),
-            @as(usize, 0), // sig = null
+            @as(usize, 0),
         );
-        // 系统调用错误返回：usize 值 >= -4096 (0xFFFFFFFFFFFFF001)
-        if (rc > @as(usize, @bitCast(@as(isize, -4095)))) {
-            std_process.exit(1); // 阶段2 裸金属死亡策略
+        // 系统调用错误返回：usize 值 >= -4096
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
+            std_process.exit(1);
         }
-        return @truncate(i32, rc);
+        return @intCast(rc);
+    }
+
+    pub fn close(fd: u32) void {
+        _ = std_os.syscall1(.close, @as(usize, fd));
     }
 };
