@@ -229,6 +229,9 @@ pub const Syscall = struct {
     /// Linux UAPI 常量
     pub const AT_FDCWD: usize = 0xFFFFFFFFFFFFFF9C; // -100 sign-extended to 64-bit
     pub const O_RDONLY: u32 = 0;
+    pub const O_RDWR: u32 = 2;
+    pub const O_CREAT: u32 = 0x40;
+    pub const O_TRUNC: u32 = 0x200;
 
     /// openat(dirfd, pathname, flags, mode) — 打开文件，返回 fd
     pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, mode: u32) i32 {
