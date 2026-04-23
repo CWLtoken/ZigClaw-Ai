@@ -75,7 +75,7 @@ pub const Ring = struct {
     cq_tail: *u32,
     cq_ring_mask: u32,      // 新增
     cqes: [*]CqEntry,       // 改动：?*anyopaque -> [*]CqEntry
-    pub fn init() Ring {
+    pub fn init() SyscallError!Ring {
         var params = SetupParams{
             .sq_entries = 0, .cq_entries = 0, .flags = 0,
             .sq_thread_cpu = 0, .sq_thread_idle = 0, .features = 0, .wq_fd = 0,
@@ -83,9 +83,12 @@ pub const Ring = struct {
             .sq_off = .{ .head = 0, .tail = 0, .ring_mask = 0, .ring_entries = 0, .flags = 0, .dropped = 0, .array = 0, .resv1 = 0, .user_addr = 0 },
             .cq_off = .{ .head = 0, .tail = 0, .ring_mask = 0, .ring_entries = 0, .overflow = 0, .cqes = 0, .flags = 0, .resv1 = 0, .user_addr = 0 },
         };
-        
-        const fd_i32 = Syscall.setup(1024, &params);
-        const fd: u32 = @intCast(fd_i32); // setup 成功时返回值 >= 0，安全转换
+
+        // === 阶段 1：创建 fd ===
+        const fd: u32 = try Syscall.setup(1024, &params);
+        errdefer Syscall.close(fd);
+
+        // === 尺寸计算 ===
         const sq_ring_size_raw: usize = params.sq_off.array + (params.sq_entries * @sizeOf(u32));
         const cq_ring_size_raw: usize = params.cq_off.cqes + (params.cq_entries * 16);
         const sqes_size: usize = params.sq_entries * 64;
@@ -93,9 +96,17 @@ pub const Ring = struct {
         const PAGE: usize = 4096;
         const sq_ring_size: usize = (sq_ring_size_raw + PAGE - 1) & ~(PAGE - 1);
         const cq_ring_size: usize = (cq_ring_size_raw + PAGE - 1) & ~(PAGE - 1);
-        const sq_ptr = Syscall.map_ring(fd, 0, sq_ring_size);
-        const cq_ptr = Syscall.map_ring(fd, sq_ring_size, cq_ring_size);
-        // SQE 数组独立 mmap：偏移量 IORING_OFF_SQES = 0x10000000
+
+        // === 阶段 2：映射 SQ ring ===
+        const sq_ptr = try Syscall.map_ring(fd, 0, sq_ring_size);
+        errdefer Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
+
+        // === 阶段 3：映射 CQ ring ===
+        const cq_ptr = try Syscall.map_ring(fd, sq_ring_size, cq_ring_size);
+        errdefer Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
+
+        // === 阶段 4：映射 SQE 数组 ===
+        // 偏移量 IORING_OFF_SQES = 0x10000000
         // 必须用 MAP_SHARED（内核共享），不能用 MAP_POPULATE（SQE 会 segfault）
         // 注意：MAP_POPULATE=0x8000，0x20000 实际是 MAP_HUGETLB（会导致大页映射失败）
         const sqes_raw = std_os.syscall6(
@@ -108,8 +119,11 @@ pub const Ring = struct {
             @as(usize, 0x10000000), // IORING_OFF_SQES
         );
         if (sqes_raw == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED
-            std_process.exit(1);
+            return SyscallError.MmapFailed;
         }
+        errdefer Syscall.munmap(sqes_raw, sqes_size);
+
+        // === 阶段 5：构造 Ring 结构体 ===
         const sqes_aligned = @as([*]SqEntry, @ptrFromInt(sqes_raw));
         const sq_base: [*]u8 = @ptrCast(@as(?*anyopaque, sq_ptr));
         const sq_head_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.head));
@@ -147,7 +161,15 @@ pub const IoRequest = struct {
 };
 // === ZC-1-02/04 终极修正：纯 syscall 降维层 ===
 const std_os = @import("std").os.linux;
-const std_process = @import("std").process;
+
+// ZC-5-01: Error union 替代 exit(1) — 生产可用性前提
+pub const SyscallError = error{
+    IoUringSetupFailed,
+    MmapFailed,
+    OpenFailed,
+    SubmitFailed,
+    RegisterFailed,
+};
 pub const SetupParams = extern struct {
     sq_entries: u32,
     cq_entries: u32,
@@ -167,7 +189,7 @@ pub const SetupParams = extern struct {
     },
 };
 pub const Syscall = struct {
-    pub fn setup(entries: u32, params: *SetupParams) i32 {
+    pub fn setup(entries: u32, params: *SetupParams) SyscallError!u32 {
         // 直接敲击 425 号门牌 (x86_64 io_uring_setup)，绕过标准库封装
         const rc = std_os.syscall3(
             .io_uring_setup,
@@ -179,11 +201,11 @@ pub const Syscall = struct {
         const rc_trunc: u32 = @truncate(rc);
         const fd: i32 = @bitCast(rc_trunc);
         if (fd < 0) {
-            std_process.exit(1);
+            return SyscallError.IoUringSetupFailed;
         }
-        return fd;
+        return rc_trunc;
     }
-    pub fn map_ring(fd: u32, offset: usize, size: usize) ?*anyopaque {
+    pub fn map_ring(fd: u32, offset: usize, size: usize) SyscallError!*anyopaque {
         // 强制预分配物理页，拒绝缺页中断
         // Linux x86_64 UAPI: MAP_SHARED=0x01, MAP_POPULATE=0x8000
         const flags: usize = 0x01 | 0x8000; // MAP_SHARED | MAP_POPULATE
@@ -200,11 +222,11 @@ pub const Syscall = struct {
             @as(usize, offset),
         );
         if (ptr == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED (Linux x86_64)
-            std_process.exit(1);
+            return SyscallError.MmapFailed;
         }
         return @ptrFromInt(ptr);
     }
-    pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) i32 {
+    pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) SyscallError!u32 {
         // ZC-3-04: min_complete > 0 时必须设置 IORING_ENTER_GETEVENTS(0x01) 标志
         const actual_flags: u32 = if (min_complete > 0) flags | 0x01 else flags;
         const rc = std_os.syscall5(
@@ -217,13 +239,19 @@ pub const Syscall = struct {
         );
         // 系统调用错误返回：usize 值 >= -4096
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
-            std_process.exit(1);
+            return SyscallError.SubmitFailed;
         }
         return @intCast(rc);
     }
 
     pub fn close(fd: u32) void {
         _ = std_os.syscall1(.close, @as(usize, fd));
+    }
+
+    /// 内部函数：取消映射，忽略错误（清理路径无法恢复）
+    /// ZC-5-02: 仅供 errdefer 清理链使用
+    fn munmap(addr: usize, len: usize) void {
+        _ = std_os.syscall2(.munmap, addr, len);
     }
 
     /// Linux UAPI 常量
@@ -234,7 +262,7 @@ pub const Syscall = struct {
     pub const O_TRUNC: u32 = 0x200;
 
     /// openat(dirfd, pathname, flags, mode) — 打开文件，返回 fd
-    pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, mode: u32) i32 {
+    pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, mode: u32) SyscallError!i32 {
         const rc = std_os.syscall4(
             .openat,
             @as(usize, @bitCast(@as(i64, dirfd))),
@@ -244,19 +272,18 @@ pub const Syscall = struct {
         );
         const result: i32 = @intCast(rc);
         if (result < 0) {
-            std_process.exit(1);
+            return SyscallError.OpenFailed;
         }
         return result;
     }
 
     /// io_uring_register(fd, opcode, arg, nr_args)
-    /// opcode 0 = IORING_REGISTER_SQES
-    pub fn register(fd: u32, opcode: u32, arg: usize, nr_args: u32) i32 {
+    /// opcode 0 = IORING_REGISTER_BUFFERS（技术债：opcode 命名待修正）
+    pub fn register(fd: u32, opcode: u32, arg: usize, nr_args: u32) SyscallError!void {
         const rc = std_os.syscall4(.io_uring_register, @as(usize, fd), @as(usize, opcode), arg, @as(usize, nr_args));
         const result: i32 = @intCast(rc);
         if (result < 0) {
-            std_process.exit(1);
+            return SyscallError.RegisterFailed;
         }
-        return result;
     }
 };

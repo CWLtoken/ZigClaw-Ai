@@ -6,7 +6,7 @@ const io_uring = @import("io_uring.zig");
 const reactor_mod = @import("reactor.zig");
 
 test "Phase6: io_uring_enter syscall verification" {
-    const ring = io_uring.Ring.init();
+    const ring = try io_uring.Ring.init();
     defer {
         _ = io_uring.Syscall.close(ring.fd);
     }
@@ -37,12 +37,8 @@ test "Phase6: io_uring_enter syscall verification" {
     @atomicStore(u32, ring.sq_tail, ov_result[0], .release);
 
     // 调用 enter(): 提交 1 个，等待 1 个完成
-    const submitted = io_uring.Syscall.enter(ring.fd, 1, 1, 0);
-
-    if (submitted < 0) {
-        return error.SkipZigTest;
-    }
-    try testing.expectEqual(@as(i32, 1), submitted);
+    const submitted = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
+    try testing.expectEqual(@as(u32, 1), submitted);
 
     // 读取 CQE
     const cq_head = @atomicLoad(u32, ring.cq_head, .acquire);

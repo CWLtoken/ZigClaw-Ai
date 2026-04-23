@@ -6,12 +6,12 @@ const io_uring = @import("io_uring.zig");
 
 test "Phase7: ReadV from /dev/zero via real io_uring" {
     // 1. 创建 Ring
-    const ring = io_uring.Ring.init();
+    const ring = try io_uring.Ring.init();
     defer io_uring.Syscall.close(ring.fd);
 
     // 2. 打开 /dev/zero
     const dev_zero: [*:0]const u8 = "/dev/zero";
-    const file_fd = io_uring.Syscall.openat(
+    const file_fd = try io_uring.Syscall.openat(
         -100, // AT_FDCWD
         dev_zero,
         io_uring.Syscall.O_RDONLY,
@@ -57,9 +57,8 @@ test "Phase7: ReadV from /dev/zero via real io_uring" {
     @atomicStore(u32, ring.sq_tail, ov_result[0], .release);
 
     // 5. 提交给内核
-    const submitted = io_uring.Syscall.enter(ring.fd, 1, 1, 0);
-    if (submitted < 0) return error.SkipZigTest;
-    try testing.expectEqual(@as(i32, 1), submitted);
+    const submitted = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
+    try testing.expectEqual(@as(u32, 1), submitted);
 
     // 6. 回收 CQE
     const cq_head = @atomicLoad(u32, ring.cq_head, .acquire);

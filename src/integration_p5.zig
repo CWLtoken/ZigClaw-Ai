@@ -30,7 +30,7 @@ test "Phase5: 真实物理内存搬运 - IoRequest 架构验证" {
     @memset(&fake_body_src, 0xBB);
     fake_body_src[0] = 0x02;
 
-    var proto = protocol.Protocol.init(&window, &test_body_pool);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool);
     proto.begin_receive(TEST_STREAM_ID);
 
     // ── Step 1: HeaderRecv ──

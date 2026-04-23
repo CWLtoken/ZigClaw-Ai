@@ -25,7 +25,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     mem.writeInt(u32, test_header.data[8..12], 100, .little);
     window.push_header(test_header);
 
-    var proto = protocol.Protocol.init(&window, &test_body_pool);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool);
 
     // ── 用例1：user_data 不匹配 → .Error (mismatch) ──
     proto.state = .Idle;

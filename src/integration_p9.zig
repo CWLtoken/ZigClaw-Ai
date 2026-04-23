@@ -7,12 +7,12 @@ const io_uring = @import("io_uring.zig");
 
 test "Phase9: WriteV then ReadV data consistency loop" {
     // 1. 创建 Ring
-    const ring = io_uring.Ring.init();
+    const ring = try io_uring.Ring.init();
     defer io_uring.Syscall.close(ring.fd);
 
     // 2. 打开临时文件（创建 + 截断 + 读写）
     const test_path: [*:0]const u8 = "/tmp/zigclaw_p9_loop";
-    const file_fd = io_uring.Syscall.openat(
+    const file_fd = try io_uring.Syscall.openat(
         -100, // AT_FDCWD
         test_path,
         io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
@@ -66,9 +66,8 @@ test "Phase9: WriteV then ReadV data consistency loop" {
     @atomicStore(u32, ring.sq_tail, ov1[0], .release);
 
     // 提交给内核
-    const submitted_w = io_uring.Syscall.enter(ring.fd, 1, 1, 0);
-    if (submitted_w < 0) return error.SkipZigTest;
-    try testing.expectEqual(@as(i32, 1), submitted_w);
+    const submitted_w = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
+    try testing.expectEqual(@as(u32, 1), submitted_w);
 
     // === 回收 WriteV CQE ===
     var cq_head = @atomicLoad(u32, ring.cq_head, .acquire);
@@ -109,9 +108,8 @@ test "Phase9: WriteV then ReadV data consistency loop" {
     @atomicStore(u32, ring.sq_tail, ov2[0], .release);
 
     // 提交给内核
-    const submitted_r = io_uring.Syscall.enter(ring.fd, 1, 1, 0);
-    if (submitted_r < 0) return error.SkipZigTest;
-    try testing.expectEqual(@as(i32, 1), submitted_r);
+    const submitted_r = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
+    try testing.expectEqual(@as(u32, 1), submitted_r);
 
     // === 回收 ReadV CQE ===
     cq_head = @atomicLoad(u32, ring.cq_head, .acquire); // 重新加载，基于上一次 +1 的状态

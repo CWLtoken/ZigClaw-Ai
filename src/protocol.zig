@@ -20,9 +20,9 @@ pub const Protocol = struct {
     state: State,
     active_stream_id: u64,
 
-    pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool) Protocol {
+    pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool) io_uring.SyscallError!Protocol {
         return .{
-            .reactor = reactor.Reactor.init(io_uring.Ring.init()),
+            .reactor = reactor.Reactor.init(try io_uring.Ring.init()),
             .window = window,
             .body_pool = body_pool,
             .state = .Idle,

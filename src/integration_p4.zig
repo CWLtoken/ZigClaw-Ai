@@ -26,7 +26,7 @@ test "Phase4: IoRequest 架构 - 单线程 Happy Path" {
     @memset(&fake_hdr_buf, 0xAA);
     @memset(&fake_body_buf, 0xBB);
 
-    var proto = protocol.Protocol.init(&window, &test_body_pool);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool);
     proto.begin_receive(TEST_STREAM_ID);
 
     // ── Step 1: HeaderRecv ──

@@ -11,12 +11,12 @@ test "Phase10: Batch submit 4 WriteV + verify with ReadV" {
     const BATCH_COUNT: u32 = 4;
 
     // 1. 创建 Ring
-    const ring = io_uring.Ring.init();
+    const ring = try io_uring.Ring.init();
     defer io_uring.Syscall.close(ring.fd);
 
     // 2. 打开临时文件
     const test_path: [*:0]const u8 = "/tmp/zigclaw_p10_batch";
-    const file_fd = io_uring.Syscall.openat(
+    const file_fd = try io_uring.Syscall.openat(
         -100, // AT_FDCWD
         test_path,
         io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
@@ -70,8 +70,8 @@ test "Phase10: Batch submit 4 WriteV + verify with ReadV" {
     @atomicStore(u32, ring.sq_tail, ov_batch[0], .release);
 
     // === 一次 enter 提交 4 个 ===
-    const submitted = io_uring.Syscall.enter(ring.fd, BATCH_COUNT, BATCH_COUNT, 0);
-    if (submitted < 0) return error.SkipZigTest;
+    const submitted = try io_uring.Syscall.enter(ring.fd, BATCH_COUNT, BATCH_COUNT, 0);
+    try testing.expectEqual(@as(u32, BATCH_COUNT), submitted);
     // enter 返回实际提交数，min_complete=4 阻塞直到全部完成
 
     // === 回收 4 个 CQE（顺序可能乱） ===
@@ -126,8 +126,8 @@ test "Phase10: Batch submit 4 WriteV + verify with ReadV" {
     if (ov_read[1] != 0) return error.SkipZigTest;
     @atomicStore(u32, ring.sq_tail, ov_read[0], .release);
 
-    const submitted_r = io_uring.Syscall.enter(ring.fd, 1, 1, 0);
-    if (submitted_r < 0) return error.SkipZigTest;
+    const submitted_r = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
+    try testing.expectEqual(@as(u32, 1), submitted_r);
 
     // 回收 ReadV CQE
     cq_head = @atomicLoad(u32, ring.cq_head, .acquire);
