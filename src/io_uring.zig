@@ -18,6 +18,10 @@ pub const IOOp = enum(u8) {
     Write = 23,        // IORING_OP_WRITE
 };
 
+/// ZC-7-01: 链式 SQE 常量
+pub const IOSQE_IO_LINK: u32 = 2;  // 链接到下一个 SQE（1 是 IOSQE_NEED_WAKEUP）
+pub const ECANCELED: i32 = 125;    // -ECANCELED = -125，链断裂时被取消的 CQE res
+
 // === 阶段 2：内核 UAPI 1:1 内存镜像 ===
 
 /// 严格映射 Linux 内核 struct io_uring_sqe (64 bytes)
@@ -229,13 +233,16 @@ pub const Syscall = struct {
     pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) SyscallError!u32 {
         // ZC-3-04: min_complete > 0 时必须设置 IORING_ENTER_GETEVENTS(0x01) 标志
         const actual_flags: u32 = if (min_complete > 0) flags | 0x01 else flags;
-        const rc = std_os.syscall5(
+        // ZC-7-01: 必须用 syscall6 传第6个参数(sigmask size)，
+        // 否则 r9 寄存器残留值会导致链式提交行为异常
+        const rc = std_os.syscall6(
             .io_uring_enter,
             @as(usize, fd),
             @as(usize, to_submit),
             @as(usize, min_complete),
             @as(usize, actual_flags),
-            @as(usize, 0),
+            @as(usize, 0), // sig = NULL
+            @as(usize, 0), // sz = 0 (sigmask size, unused when sig=NULL)
         );
         // 系统调用错误返回：usize 值 >= -4096
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
