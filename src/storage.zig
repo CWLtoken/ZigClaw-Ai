@@ -53,4 +53,10 @@ pub const BodyBufferPool = struct {
         const slot_idx = @mod(stream_id, 1024);
         self.write_offsets[slot_idx] += bytes_written;
     }
+
+    /// 获取读取切片（从 0 到当前写入偏移）
+    pub fn get_read_slice(self: *BodyBufferPool, stream_id: u64, len: u32) []u8 {
+        const slot_idx = @mod(stream_id, 1024);
+        return self.buffers[slot_idx][0..len];
+    }
 };

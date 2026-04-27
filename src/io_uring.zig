@@ -379,6 +379,10 @@ pub const Syscall = struct {
     /// connect(fd, addr, addrlen) - blocking connect (for test)
     pub fn connect(fd: i32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
         const rc = std_os.syscall3(.connect, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
+        // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
+        if (rc > 0x7FFFFFFFFFFFFFFF) {
+            return SyscallError.OpenFailed;
+        }
         const result: i32 = @intCast(rc);
         if (result < 0 and result != -115) return SyscallError.OpenFailed;
     }

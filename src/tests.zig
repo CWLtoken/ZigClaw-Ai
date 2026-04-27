@@ -19,7 +19,7 @@ const p12 = @import("integration_p12.zig");
 const p13 = @import("integration_p13.zig");
 const p14 = @import("integration_p14.zig");
 const p15 = @import("integration_p15.zig");
-// const p16 = @import("integration_p16.zig"); // 暂时跳过：需要解决 Zig 0.16 socket API 问题
+const p16 = @import("integration_p16.zig");
 
 comptime {
     _ = p3;
@@ -35,5 +35,5 @@ comptime {
     _ = p13;
     _ = p14;
     _ = p15;
-    // _ = p16;
+    _ = p16;
 }
