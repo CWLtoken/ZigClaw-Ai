@@ -29,7 +29,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     // ── 用例1：user_data 不匹配 → .Error (mismatch) ──
     proto.state = .Idle;
-    proto.begin_receive(42);
+    proto.begin_receive(42, -1);
 
     var io_req1 = io_uring.IoRequest{ .stream_id = 99, .buf_ptr = null };
     {
@@ -54,7 +54,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     // ── 用例2：HeaderRecv 成功 → .BodyRecv ──
     proto.state = .Idle;
-    proto.begin_receive(42);
+    proto.begin_receive(42, -1);
 
     var fake_hdr: [13]u8 align(64) = undefined;
     @memset(&fake_hdr, 0xAA);

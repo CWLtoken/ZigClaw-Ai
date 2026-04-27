@@ -23,6 +23,32 @@ pub const Reactor = struct {
         return io_uring.Syscall.enter(self.ring.fd, to_submit, min_complete, 0);
     }
 
+    /// 向 SQ 提交一个 RECV 请求（通过 ReadV + iovec 实现）
+    /// 注意：iovec 和 io_req 必须在调用者栈帧上，确保 submit() 调用 enter() 时仍然存活
+    pub fn prepare_recv(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) void {
+        const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
+        const idx = sq_tail & self.ring.sq_ring_mask;
+
+        self.ring.sq_entries[idx] = .{
+            .opcode = @intFromEnum(io_uring.IOOp.ReadV),
+            .flags = 0,
+            .ioprio = 0,
+            .fd = fd,
+            .off = 0,
+            .addr = @intFromPtr(iovec),  // iovec 指针
+            .len = 1,                       // 1 个 iovec
+            .__pad1 = 0,
+            .user_data = @intFromPtr(io_req),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .__pad2 = 0,
+        };
+        self.ring.sq_array[idx] = idx;
+        @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
+    }
+
     pub fn poll(self: *Reactor) Event {
         // real io_uring: application reads CQ only
         const cq_head = @atomicLoad(u32, self.ring.cq_head, .acquire);

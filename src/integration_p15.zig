@@ -25,7 +25,7 @@ test "Phase15: Protocol receives 13-byte header via io_uring RECV" {
     try testing.expectEqual(protocol.State.Idle, proto.state);
     
     // 开始接收
-    proto.begin_receive(TEST_STREAM_ID);
+    proto.begin_receive(TEST_STREAM_ID, -1);
     try testing.expectEqual(protocol.State.HeaderRecv, proto.state);
 
     // ===========================================================

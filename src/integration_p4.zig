@@ -27,7 +27,7 @@ test "Phase4: IoRequest 架构 - 单线程 Happy Path" {
     @memset(&fake_body_buf, 0xBB);
 
     var proto = try protocol.Protocol.init(&window, &test_body_pool);
-    proto.begin_receive(TEST_STREAM_ID);
+    proto.begin_receive(TEST_STREAM_ID, -1);
 
     // ── Step 1: HeaderRecv ──
     // 提交 SQE：读取 header (13 bytes)
