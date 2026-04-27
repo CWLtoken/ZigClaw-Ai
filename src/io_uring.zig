@@ -19,7 +19,8 @@ pub const IOOp = enum(u8) {
 };
 
 /// ZC-7-01: 链式 SQE 常量
-pub const IOSQE_IO_LINK: u32 = 2;  // 链接到下一个 SQE（1 是 IOSQE_NEED_WAKEUP）
+pub const IOSQE_IO_LINK: u32 = 4;  // ZC-7-01 修正: IOSQE_IO_LINK_BIT=2, 1<<2=4
+// IOSQE bit 位图: bit0=FIXED_FILE(1), bit1=IO_DRAIN(2), bit2=IO_LINK(4), bit3=IO_HARDLINK(8)
 pub const ECANCELED: i32 = 125;    // -ECANCELED = -125，链断裂时被取消的 CQE res
 
 // === 阶段 2：内核 UAPI 1:1 内存镜像 ===
@@ -106,7 +107,10 @@ pub const Ring = struct {
         errdefer Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
 
         // === 阶段 3：映射 CQ ring ===
-        const cq_ptr = try Syscall.map_ring(fd, sq_ring_size, cq_ring_size);
+        // ZC-7-01 修复：CQ ring 必须用 IORING_OFF_CQ_RING = 0x8000000，不是 sq_ring_size
+        // D6: CQ ring mmap offset = IORING_OFF_CQ_RING (0x8000000)，错误使用 sq_ring_size 导致
+        // broken chain FSync CQE 返回 -9 而不是 -125（ECANCELED）
+        const cq_ptr = try Syscall.map_ring(fd, 0x8000000, cq_ring_size);
         errdefer Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
 
         // === 阶段 4：映射 SQE 数组 ===
