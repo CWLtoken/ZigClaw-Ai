@@ -46,7 +46,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
     // fake CQE：user_data 与 SQE 相同，res=-1 → Error
-    push_cqe(proto.reactor.ring, @intFromPtr(&io_req1), -1);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&io_req1), -1);
 
     const s1 = proto.step();
     try testing.expect(s1 == .Error);
@@ -74,7 +74,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
         };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
-    push_cqe(proto.reactor.ring, @intFromPtr(&io_req2), 13);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&io_req2), 13);
 
     try testing.expectEqual(protocol.State.BodyRecv, proto.step());
 
@@ -97,7 +97,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
         };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
-    push_cqe(proto.reactor.ring, @intFromPtr(&io_req3), 40);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&io_req3), 40);
 
     try testing.expectEqual(protocol.State.BodyRecv, proto.step());
 
@@ -120,7 +120,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
         };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
-    push_cqe(proto.reactor.ring, @intFromPtr(&io_req4), 60);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&io_req4), 60);
 
     try testing.expectEqual(protocol.State.BodyDone, proto.step());
 

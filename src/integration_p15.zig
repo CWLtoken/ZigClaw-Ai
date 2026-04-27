@@ -15,13 +15,11 @@ const TEST_STREAM_ID: u64 = 42;
 
 test "Phase15: Protocol receives 13-byte header via io_uring RECV" {
     // ===========================================================
-    // 阶段 1：创建 Ring 和 Protocol（使用外部 Ring）
+    // 阶段 1：创建 Protocol（内部创建 Ring）
     // ===========================================================
-    var ring = try io_uring.Ring.init();
-    
     var window = storage.StreamWindow.init();
     var test_body_pool = storage.BodyBufferPool.init();
-    var proto = try protocol.Protocol.init_with_ring(&window, &test_body_pool, &ring);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool);
     
     // 初始状态：Idle
     try testing.expectEqual(protocol.State.Idle, proto.state);
@@ -54,7 +52,7 @@ test "Phase15: Protocol receives 13-byte header via io_uring RECV" {
 
     // ===========================================================
     // 阶段 4：手动推入 CQE（模拟 io_uring RECV 完成）
-    // 使用 P15 自己的 ring（和 proto 使用的是同一个 Ring）
+    // 使用 &proto.reactor.ring（同 DRD-021-A 修正 2）
     // ===========================================================
     
     // 构造 IoRequest（模拟 Reactor.poll() 解码 user_data 后的结果）
@@ -64,6 +62,7 @@ test "Phase15: Protocol receives 13-byte header via io_uring RECV" {
     };
 
     // 手动推入 CQE 到 CQ tail（生产者指针，正确方式）
+    const ring = &proto.reactor.ring;
     const cq_tail_loc = @atomicLoad(u32, ring.cq_tail, .acquire);
     const cqe_idx = cq_tail_loc & ring.cq_ring_mask;
     const fake_cqe = &ring.cqes[cqe_idx];
