@@ -75,7 +75,8 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
 
     // 8. client sends "PING"
     const ping_msg = "PING";
-    const sent = try io_uring.Syscall.send(connect_fd, ping_msg.ptr, ping_msg.len, 0);
+    const connect_fd_u32: u32 = @intCast(connect_fd);  // i32 -> u32，匹配 Syscall.send() 签名
+    const sent = try io_uring.Syscall.send(connect_fd_u32, ping_msg.ptr, ping_msg.len, 0);
     try testing.expectEqual(@as(i32, ping_msg.len), sent);
 
     // 9. submit RECV via io_uring to receive "PING"

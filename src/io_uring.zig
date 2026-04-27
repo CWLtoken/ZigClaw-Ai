@@ -395,9 +395,15 @@ pub const Syscall = struct {
         return result;
     }
 
-    /// send(fd, buf, len, flags) - blocking send (for test)
-    pub fn send(fd: i32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = std_os.syscall4(.sendto, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, flags);
+    /// send(fd, buf, len, flags) — 纯 syscall 降维，不经过标准库
+    pub fn send(fd: u32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
+        const rc = std_os.syscall4(
+            .sendto,
+            @as(usize, fd),
+            @intFromPtr(buf),
+            len,
+            @as(usize, flags),
+        );
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
