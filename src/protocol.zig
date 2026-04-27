@@ -1,6 +1,8 @@
 // src/protocol.zig
 // ZigClaw V2.4 | 系统大脑 | DMA自省 | ALU溢出防御 | Phase5真实内存搬运
-const mem = @import("std").mem;
+const std = @import("std");
+const mem = std.mem;
+const std_heap = std.heap;
 const storage = @import("storage.zig");
 const reactor = @import("reactor.zig");
 const io_uring = @import("io_uring.zig");
@@ -14,6 +16,7 @@ pub const State = union(enum) {
 };
 
 pub const Protocol = struct {
+    ring: *io_uring.Ring,  // 指针，由 Protocol 拥有（堆分配）
     reactor: reactor.Reactor,
     window: *storage.StreamWindow,
     body_pool: *storage.BodyBufferPool,
@@ -21,8 +24,23 @@ pub const Protocol = struct {
     active_stream_id: u64,
 
     pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool) io_uring.SyscallError!Protocol {
+        const ring = std_heap.page_allocator.create(io_uring.Ring) catch @panic("OOM");
+        ring.* = try io_uring.Ring.init();
         return .{
-            .reactor = reactor.Reactor.init(try io_uring.Ring.init()),
+            .ring = ring,
+            .reactor = reactor.Reactor.init(ring),
+            .window = window,
+            .body_pool = body_pool,
+            .state = .Idle,
+            .active_stream_id = 0,
+        };
+    }
+
+    /// 使用外部 Ring 初始化（允许测试注入）
+    pub fn init_with_ring(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool, ring: *io_uring.Ring) io_uring.SyscallError!Protocol {
+        return .{
+            .ring = ring,  // 注意：不拥有此外部 Ring，不释放
+            .reactor = reactor.Reactor.init(ring),
             .window = window,
             .body_pool = body_pool,
             .state = .Idle,

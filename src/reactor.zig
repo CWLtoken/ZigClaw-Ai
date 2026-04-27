@@ -12,9 +12,9 @@ pub const Event = union(enum) {
 };
 
 pub const Reactor = struct {
-    ring: io_uring.Ring,
+    ring: *io_uring.Ring,
 
-    pub fn init(ring: io_uring.Ring) Reactor {
+    pub fn init(ring: *io_uring.Ring) Reactor {
         return .{ .ring = ring };
     }
 
