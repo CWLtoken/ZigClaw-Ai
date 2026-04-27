@@ -1,7 +1,6 @@
 // src/storage.zig
 // ZigClaw V2.4 | 物理存储池 | 报头生命周期管理 + BodyBufferPool
-// 豁免：顶部const std = @import("std")，用于std.mem.readInt类型推导
-const std = @import("std");
+const mem = @import("std").mem;
 const core = @import("core.zig");
 
 pub const StreamWindow = struct {
@@ -25,7 +24,7 @@ pub const StreamWindow = struct {
     pub fn access_header(self: *StreamWindow, stream_id: u64) ?*core.TokenStreamHeader {
         for (&self.headers, 0..) |*h, i| {
             if (i < self.len) {
-                const id = std.mem.readInt(u64, h.data[0..8], .little);
+                const id = mem.readInt(u64, h.data[0..8], .little);
                 if (id == stream_id) return h;
             }
         }
