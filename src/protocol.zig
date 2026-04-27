@@ -30,6 +30,17 @@ pub const Protocol = struct {
         };
     }
 
+    // P15: 使用外部传入的 Ring（避免内部创建新 Ring）
+    pub fn init_with_ring(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool, ring: *io_uring.Ring) io_uring.SyscallError!Protocol {
+        return .{
+            .reactor = reactor.Reactor.init(ring.*),  // 复制 Ring 实例
+            .window = window,
+            .body_pool = body_pool,
+            .state = .Idle,
+            .active_stream_id = 0,
+        };
+    }
+
     pub fn step(self: *Protocol) State {
         switch (self.state) {
             .Idle => {},

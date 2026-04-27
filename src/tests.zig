@@ -18,6 +18,7 @@ const p11 = @import("integration_p11.zig");
 const p12 = @import("integration_p12.zig");
 const p13 = @import("integration_p13.zig");
 const p14 = @import("integration_p14.zig");
+const p15 = @import("integration_p15.zig");
 
 comptime {
     _ = p3;
@@ -32,4 +33,5 @@ comptime {
     _ = p12;
     _ = p13;
     _ = p14;
+    _ = p15;
 }

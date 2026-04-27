@@ -5,6 +5,11 @@
 pub const SQ_DEPTH = 1024;
 pub const SQ_MASK = SQ_DEPTH - 1;
 
+// Network constants (top-level, accessible via io_uring.AF_INET etc.)
+pub const AF_INET: u32 = 2;
+pub const SOCK_STREAM: u32 = 1;
+pub const INADDR_LOOPBACK: u32 = 0x0100007F;
+
 pub const IOOp = enum(u8) {
     NOP = 0,           // IORING_OP_NOP
     ReadV = 1,         // IORING_OP_READV
@@ -381,6 +386,10 @@ pub const Syscall = struct {
     /// recv(fd, buf, len, flags) - blocking recv (for test verification)
     pub fn recv(fd: i32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
         const rc = std_os.syscall4(.recvfrom, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, flags);
+        // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
+        if (rc > 0x7FFFFFFFFFFFFFFF) {
+            return SyscallError.OpenFailed;
+        }
         const result: i32 = @intCast(rc);
         if (result < 0) return SyscallError.OpenFailed;
         return result;
@@ -389,6 +398,10 @@ pub const Syscall = struct {
     /// send(fd, buf, len, flags) - blocking send (for test)
     pub fn send(fd: i32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
         const rc = std_os.syscall4(.sendto, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, flags);
+        // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
+        if (rc > 0x7FFFFFFFFFFFFFFF) {
+            return SyscallError.OpenFailed;
+        }
         const result: i32 = @intCast(rc);
         if (result < 0) return SyscallError.OpenFailed;
         return result;
