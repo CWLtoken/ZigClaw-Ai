@@ -14,8 +14,11 @@ pub const IOOp = enum(u8) {
     WriteFixed = 5,    // IORING_OP_WRITE_FIXED
     PollAdd = 6,       // IORING_OP_POLL_ADD
     PollRemove = 7,    // IORING_OP_POLL_REMOVE
+    Accept = 13,    // IORING_OP_ACCEPT
     Read = 22,         // IORING_OP_READ
     Write = 23,        // IORING_OP_WRITE
+    Recv = 27,      // IORING_OP_RECV
+    Send = 26,      // IORING_OP_SEND
 };
 
 /// ZC-7-01: 链式 SQE 常量
@@ -332,4 +335,70 @@ pub const Syscall = struct {
         }
     }
 
+    /// Network constants
+    pub const AF_INET: u32 = 2;
+    pub const SOCK_STREAM: u32 = 1;
+    pub const INADDR_LOOPBACK: u32 = 0x0100007F;
+
+    /// htons: host -> network byte order (16-bit)
+    pub fn htons(host: u16) u16 {
+        return ((host & 0xFF) << 8) | ((host >> 8) & 0xFF);
+    }
+
+    /// socket(domain, type, protocol) -> fd
+    pub fn socket(domain: u32, sock_type: u32, protocol: u32) SyscallError!i32 {
+        const rc = std_os.syscall3(.socket, domain, sock_type, protocol);
+        const result: i32 = @intCast(rc);
+        if (result < 0) return SyscallError.OpenFailed;
+        return result;
+    }
+
+    /// bind(fd, addr, addrlen)
+    pub fn bind(fd: i32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
+        const rc = std_os.syscall3(.bind, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    }
+
+    /// listen(fd, backlog)
+    pub fn listen(fd: i32, backlog: u32) SyscallError!void {
+        const rc = std_os.syscall2(.listen, @as(usize, @bitCast(@as(i64, fd))), backlog);
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    }
+
+    /// getsockname(fd, addr, addrlen)
+    pub fn getsockname(fd: i32, addr: *SockAddrIn, addrlen: *u32) SyscallError!void {
+        const rc = std_os.syscall3(.getsockname, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), @intFromPtr(addrlen));
+        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    }
+
+    /// connect(fd, addr, addrlen) - blocking connect (for test)
+    pub fn connect(fd: i32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
+        const rc = std_os.syscall3(.connect, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
+        const result: i32 = @intCast(rc);
+        if (result < 0 and result != -115) return SyscallError.OpenFailed;
+    }
+
+    /// recv(fd, buf, len, flags) - blocking recv (for test verification)
+    pub fn recv(fd: i32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
+        const rc = std_os.syscall4(.recvfrom, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, flags);
+        const result: i32 = @intCast(rc);
+        if (result < 0) return SyscallError.OpenFailed;
+        return result;
+    }
+
+    /// send(fd, buf, len, flags) - blocking send (for test)
+    pub fn send(fd: i32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
+        const rc = std_os.syscall4(.sendto, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, flags);
+        const result: i32 = @intCast(rc);
+        if (result < 0) return SyscallError.OpenFailed;
+        return result;
+    }
+};
+
+/// Linux struct sockaddr_in (16 bytes, C ABI compatible)
+pub const SockAddrIn = extern struct {
+    family: u16 = 0,
+    port: u16 = 0,
+    addr: u32 = 0,
+    zero: [8]u8 = .{0} ** 8,
 };
