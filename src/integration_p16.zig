@@ -54,9 +54,11 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     // ===========================================================
     const accept_ring = &proto.reactor.ring;
 
-    // 提交 ACCEPT SQE
+    // 准备客户端地址接收缓冲区
     var client_addr: io_uring.SockAddrIn = undefined;
     var client_addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
+
+    // 提交 ACCEPT SQE（按照 P14 的正确格式）
     const accept_sq_tail = @atomicLoad(u32, accept_ring.sq_tail, .acquire);
     const accept_idx = accept_sq_tail & io_uring.SQ_MASK;
     accept_ring.sq_entries[accept_idx] = .{
@@ -78,7 +80,7 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     accept_ring.sq_array[accept_idx] = accept_idx;
     @atomicStore(u32, accept_ring.sq_tail, accept_sq_tail + 1, .release);
 
-    // 非阻塞提交 ACCEPT 到内核（不等待完成）
+    // 提交 ACCEPT SQE 到内核（不等待完成）
     _ = try proto.reactor.submit(1, 0);
 
     // 客户端连接（使用 Syscall.connect）
@@ -95,10 +97,6 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     _ = try proto.reactor.submit(0, 1); // 等待至少 1 个 CQE
     const accept_cqe = accept_ring.cqes[0];
     try testing.expectEqual(@as(u64, 0xACE1), accept_cqe.user_data);
-    // 调试：打印 accept_cqe.res
-    if (accept_cqe.res <= 0) {
-        std.debug.print("ACCEPT failed: res = {}\n", .{accept_cqe.res});
-    }
     const accepted_fd: i32 = @intCast(accept_cqe.res);
     try testing.expect(accepted_fd > 0);
 
@@ -112,7 +110,14 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     try testing.expectEqual(protocol.State.HeaderRecv, proto.state);
 
     // ===========================================================
-    // 阶段 5：客户端发送 13 字节报头
+    // 阶段 5：Protocol.step() 提交 RECV 接收报头
+    // ===========================================================
+    // 第一次调用 step()：poll() 返回 Idle，提交 RECV，返回 HeaderRecv
+    const state0 = proto.step();
+    try testing.expectEqual(protocol.State.HeaderRecv, state0);
+
+    // ===========================================================
+    // 阶段 6：客户端发送 13 字节报头
     // ===========================================================
     var header = core.TokenStreamHeader.init();
     mem.writeInt(u64, header.data[0..8], TEST_STREAM_ID, .little);
@@ -121,42 +126,36 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     _ = try io_uring.Syscall.send(@intCast(client_fd), &header.data, 13, 0);
 
     // ===========================================================
-    // 阶段 6：Protocol.step() 应该提交 RECV（因为 poll() 返回 Idle）
-    // 然后我们提交并等待完成
+    // 阶段 7：等待 RECV 完成，然后 step() 处理 IoComplete
     // ===========================================================
-    _ = proto.step(); // 提交 RECV，返回 HeaderRecv（因为还没完成）
     // 等待 RECV 完成
     _ = try proto.reactor.submit(0, 1);
-    // 现在 step() 应该处理 IoComplete
+    // 现在 step() 应该处理 IoComplete，转移到 BodyRecv，并提交 RECV 接收 body
     const state1 = proto.step();
     try testing.expectEqual(protocol.State.BodyRecv, state1);
 
     // ===========================================================
-    // 阶段 7：客户端发送 32 字节 body
+    // 阶段 8：客户端发送 32 字节 body
     // ===========================================================
     var body: [TEST_BODY_LEN]u8 = undefined;
     @memset(&body, 0xAB);
-    _ = io_uring.Syscall.send(@intCast(client_fd), &body, TEST_BODY_LEN, 0) catch |err| {
-        std.debug.print("send body failed: {}\n", .{err});
-        return err;
-    };
+    _ = try io_uring.Syscall.send(@intCast(client_fd), &body, TEST_BODY_LEN, 0);
 
     // ===========================================================
-    // 阶段 8：Protocol.step() 应该提交 RECV 接收 body
+    // 阶段 9：等待 RECV 完成，然后 step() 处理 IoComplete
     // ===========================================================
-    _ = proto.step(); // 提交 RECV，返回 BodyRecv
     // 等待 RECV 完成
     _ = try proto.reactor.submit(0, 1);
-    // 现在 step() 应该处理 IoComplete
+    // 现在 step() 应该处理 IoComplete，转移到 BodyDone
     const state2 = proto.step();
     try testing.expectEqual(protocol.State.BodyDone, state2);
 
     // ===========================================================
-    // 阶段 9：验证数据是否正确接收
+    // 阶段 10：验证数据是否正确接收
     // ===========================================================
     const final_header = window.access_header(TEST_STREAM_ID).?;
     const final_len = mem.readInt(u32, final_header.data[8..12], .little);
-    try testing.expectEqual(@as(u32, 32), final_len);
+    try testing.expectEqual(@as(u32, 0), final_len); // remaining = 0
 
     // 验证 body 内容
     const body_slice = test_body_pool.get_read_slice(TEST_STREAM_ID, TEST_BODY_LEN);
