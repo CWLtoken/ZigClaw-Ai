@@ -410,13 +410,22 @@ pub const Syscall = struct {
         );
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
+            // 调试：存储错误码
+            last_send_rc = rc;
             return SyscallError.OpenFailed;
         }
         const result: i32 = @intCast(rc);
-        if (result < 0) return SyscallError.OpenFailed;
+        if (result < 0) {
+            // 调试：存储错误码（result 是 i32 负的 errno）
+            last_send_rc = @as(usize, @bitCast(@as(i64, result)));
+            return SyscallError.OpenFailed;
+        }
         return result;
     }
 };
+
+/// 调试用：最后一次 send 的返回值
+pub var last_send_rc: usize = 0;;
 
 /// Linux struct sockaddr_in (16 bytes, C ABI compatible)
 pub const SockAddrIn = extern struct {

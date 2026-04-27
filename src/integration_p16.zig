@@ -139,7 +139,10 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     // ===========================================================
     var body: [TEST_BODY_LEN]u8 = undefined;
     @memset(&body, 0xAB);
-    _ = try io_uring.Syscall.send(@intCast(client_fd), &body, TEST_BODY_LEN, 0);
+    _ = io_uring.Syscall.send(@intCast(client_fd), &body, TEST_BODY_LEN, 0) catch |err| {
+        std.debug.print("send body failed: last_send_rc = 0x{x}\n", .{io_uring.last_send_rc});
+        return err;
+    };
 
     // ===========================================================
     // 阶段 9：等待 RECV 完成，然后 step() 处理 IoComplete
