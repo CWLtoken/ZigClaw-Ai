@@ -400,23 +400,24 @@ pub const Syscall = struct {
     }
 
     /// send(fd, buf, len, flags) — 纯 syscall 降维，不经过标准库
+    /// 注意：sendto 系统调用需要 6 个参数，最后两个是 dest_addr=NULL, addrlen=0
     pub fn send(fd: u32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = std_os.syscall4(
+        const rc = std_os.syscall6(
             .sendto,
             @as(usize, fd),
             @intFromPtr(buf),
             len,
             @as(usize, flags),
+            @as(usize, 0), // dest_addr = NULL
+            @as(usize, 0), // addrlen = 0
         );
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
-            // 调试：存储错误码
             last_send_rc = rc;
             return SyscallError.OpenFailed;
         }
         const result: i32 = @intCast(rc);
         if (result < 0) {
-            // 调试：存储错误码（result 是 i32 负的 errno）
             last_send_rc = @as(usize, @bitCast(@as(i64, result)));
             return SyscallError.OpenFailed;
         }
@@ -425,7 +426,7 @@ pub const Syscall = struct {
 };
 
 /// 调试用：最后一次 send 的返回值
-pub var last_send_rc: usize = 0;;
+pub var last_send_rc: usize = 0;
 
 /// Linux struct sockaddr_in (16 bytes, C ABI compatible)
 pub const SockAddrIn = extern struct {

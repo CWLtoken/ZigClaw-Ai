@@ -140,13 +140,9 @@ pub const Protocol = struct {
                             return self.state;
                         }
 
-                        if (io.buf_ptr != null) {
-                            const src_ptr: [*]u8 = @ptrCast(io.buf_ptr.?);
-                            const dest_ptr, const offset2 = self.body_pool.get_write_slice(self.active_stream_id);
-                            _ = offset2;
-                            @memcpy(dest_ptr[0..consumed], src_ptr[0..consumed]);
-                            self.body_pool.advance(self.active_stream_id, consumed);
-                        }
+                        // 数据已经在 body_pool 缓冲区中（RECV 直接写入），无需 memcpy
+                        // 只需更新写入位置
+                        self.body_pool.advance(self.active_stream_id, consumed);
 
                         mem.writeInt(u32, header.data[8..12], new_len, .little);
                         if (new_len == 0) {

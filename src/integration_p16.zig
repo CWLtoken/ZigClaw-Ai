@@ -123,16 +123,21 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     mem.writeInt(u64, header.data[0..8], TEST_STREAM_ID, .little);
     mem.writeInt(u32, header.data[8..12], TEST_BODY_LEN, .little); // total_len = 32
     header.data[12] = 0; // op_code = 0
-    _ = try io_uring.Syscall.send(@intCast(client_fd), &header.data, 13, 0);
+    // 军令3：验证第一步 send 是否成功
+    const sent_header = try io_uring.Syscall.send(@intCast(client_fd), &header.data, 13, 0);
+    try testing.expectEqual(@as(i32, 13), sent_header);
 
     // ===========================================================
     // 阶段 7：等待 RECV 完成，然后 step() 处理 IoComplete
     // ===========================================================
-    // 等待 RECV 完成
+    // 等待 RECV 完成（报头）
     _ = try proto.reactor.submit(0, 1);
-    // 现在 step() 应该处理 IoComplete，转移到 BodyRecv，并提交 RECV 接收 body
+    // 处理 IoComplete，转移到 BodyRecv
     const state1 = proto.step();
     try testing.expectEqual(protocol.State.BodyRecv, state1);
+    
+    // 再次调用 step()，触发 BodyRecv 的 Idle 分支，提交 body RECV
+    _ = proto.step();
 
     // ===========================================================
     // 阶段 8：客户端发送 32 字节 body
@@ -140,7 +145,6 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     var body: [TEST_BODY_LEN]u8 = undefined;
     @memset(&body, 0xAB);
     _ = io_uring.Syscall.send(@intCast(client_fd), &body, TEST_BODY_LEN, 0) catch |err| {
-        std.debug.print("send body failed: last_send_rc = 0x{x}\n", .{io_uring.last_send_rc});
         return err;
     };
 
