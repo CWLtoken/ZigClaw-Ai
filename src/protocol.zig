@@ -12,6 +12,7 @@ pub const State = union(enum) {
     HeaderRecv,
     BodyRecv,
     BodyDone,
+    WaitingBusiness,  // 等待异步业务处理完成
     SendDone,
     Error: struct { reason: []const u8 },
 };
@@ -20,7 +21,8 @@ pub const Protocol = struct {
     reactor: reactor.Reactor,
     window: *storage.StreamWindow,
     body_pool: *storage.BodyBufferPool,
-    handler: router.HandlerFn,             // 业务处理器
+    handler: router.HandlerFn,             // 同步业务处理器
+    async_handler: ?router.AsyncHandlerFn, // 异步业务处理器（可选）
     state: State,
     active_stream_id: u64,
     accepted_fd: i32,                    // 网络连接 fd
@@ -29,6 +31,9 @@ pub const Protocol = struct {
     current_io_req: io_uring.IoRequest,  // 当前 RECV/SEND 的 IoRequest（生命周期跟随 Protocol）
     current_iovec: io_uring.Iovec,       // 当前 RECV/SEND 的 iovec（生命周期跟随 Protocol）
     send_buf: [4096]u8,                 // 发送缓冲区（用于存储响应数据，与 router.RequestContext 同大小）
+    response_ready: bool = false,         // 异步业务处理完成标志
+    pending_ctx: ?router.RequestContext = null, // 保存待处理的请求上下文（异步路径）
+    body_total_len: u32 = 0,             // 保存 body 总长度（从 header 中读取）
 
     pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool, handler: router.HandlerFn) io_uring.SyscallError!Protocol {
         return .{
@@ -36,6 +41,7 @@ pub const Protocol = struct {
             .window = window,
             .body_pool = body_pool,
             .handler = handler,
+            .async_handler = null,
             .state = .Idle,
             .active_stream_id = 0,
             .accepted_fd = -1,
@@ -44,6 +50,7 @@ pub const Protocol = struct {
             .current_io_req = undefined,
             .current_iovec = undefined,
             .send_buf = [_]u8{0} ** 4096,
+            .response_ready = false,
         };
     }
 
@@ -59,6 +66,7 @@ pub const Protocol = struct {
             .window = window,
             .body_pool = body_pool,
             .handler = handler,
+            .async_handler = null,
             .state = .Idle,
             .active_stream_id = 0,
             .accepted_fd = -1,
@@ -67,7 +75,15 @@ pub const Protocol = struct {
             .current_io_req = undefined,
             .current_iovec = undefined,
             .send_buf = [_]u8{0} ** 4096,
+            .response_ready = false,
         };
+    }
+
+    // onResponseReady：异步业务完成回调（静态函数）
+    // 由 async_handler 在业务完成后调用
+    pub fn onResponseReady(ctx: *router.RequestContext) void {
+        const self = @as(*Protocol, @ptrCast(@alignCast(ctx.userdata.?)));
+        self.response_ready = true;
     }
 
     pub fn step(self: *Protocol) State {
@@ -117,6 +133,8 @@ pub const Protocol = struct {
                             self.state = .{ .Error = .{ .reason = "dma memory corruption" } };
                             return self.state;
                         }
+                        // 保存 body 总长度
+                        self.body_total_len = mem.readInt(u32, hdr.data[8..12], .little);
                         self.recv_in_progress = false;
                         self.state = .BodyRecv;
                     },
@@ -198,29 +216,71 @@ pub const Protocol = struct {
                     .body_pool = self.body_pool,
                     .response_buf = [_]u8{0} ** 4096,
                     .response_len = 0,
+                    .userdata = null,
+                    .body_len = self.body_total_len, // 设置 body 总长度
                 };
 
-                // 调用业务处理器（同步）
-                self.handler(&ctx);
+                // 检查是否有异步处理器
+                if (self.async_handler) |async_h| {
+                    // 异步路径：保存 ctx，注册回调，进入 WaitingBusiness 状态
+                    self.pending_ctx = ctx;
+                    var pending_ptr = &self.pending_ctx.?;
+                    pending_ptr.userdata = @ptrCast(self); // 存储 Protocol 指针，供回调使用
+                    async_h(pending_ptr, onResponseReady); // 提交异步任务，立即返回
+                    self.state = .WaitingBusiness;
+                } else {
+                    // 同步路径：直接调用处理器
+                    self.handler(&ctx);
 
-                // 复制响应数据到 send_buf
-                @memcpy(self.send_buf[0..ctx.response_len], ctx.response_buf[0..ctx.response_len]);
-                const send_len = ctx.response_len;
+                    // 复制响应数据到 send_buf
+                    @memcpy(self.send_buf[0..ctx.response_len], ctx.response_buf[0..ctx.response_len]);
+                    const send_len = ctx.response_len;
 
-                // 提交 SEND
-                self.current_iovec = io_uring.Iovec{
-                    .iov_base = &self.send_buf,
-                    .iov_len = send_len,
-                };
-                self.current_io_req = io_uring.IoRequest{
-                    .stream_id = self.active_stream_id,
-                    .buf_ptr = &self.send_buf,
-                };
-                self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
-                _ = self.reactor.submit(1, 0) catch unreachable;
+                    // 提交 SEND
+                    self.current_iovec = io_uring.Iovec{
+                        .iov_base = &self.send_buf,
+                        .iov_len = send_len,
+                    };
+                    self.current_io_req = io_uring.IoRequest{
+                        .stream_id = self.active_stream_id,
+                        .buf_ptr = &self.send_buf,
+                    };
+                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
+                    _ = self.reactor.submit(1, 0) catch unreachable;
 
-                // 进入 SendDone 状态
-                self.state = .SendDone;
+                    // 进入 SendDone 状态
+                    self.state = .SendDone;
+                }
+            },
+            .WaitingBusiness => {
+                // 等待异步业务处理完成
+                if (self.response_ready) {
+                    // 业务完成，获取保存的上下文
+                    const ctx = &self.pending_ctx.?;
+
+                    // 复制响应数据到 send_buf
+                    @memcpy(self.send_buf[0..ctx.response_len], ctx.response_buf[0..ctx.response_len]);
+                    const send_len = ctx.response_len;
+
+                    // 提交 SEND
+                    self.current_iovec = io_uring.Iovec{
+                        .iov_base = &self.send_buf,
+                        .iov_len = send_len,
+                    };
+                    self.current_io_req = io_uring.IoRequest{
+                        .stream_id = self.active_stream_id,
+                        .buf_ptr = &self.send_buf,
+                    };
+                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
+                    _ = self.reactor.submit(1, 0) catch unreachable;
+
+                    // 清理状态
+                    self.response_ready = false;
+                    self.pending_ctx = null;
+
+                    // 进入 SendDone 状态
+                    self.state = .SendDone;
+                }
             },
             .SendDone => {
                 // 等待 SEND 完成
@@ -244,11 +304,12 @@ pub const Protocol = struct {
         return self.state;
     }
 
-    pub fn begin_receive(self: *Protocol, stream_id: u64, accepted_fd: i32, handler: router.HandlerFn) void {
+    pub fn begin_receive(self: *Protocol, stream_id: u64, accepted_fd: i32, handler: router.HandlerFn, async_handler: ?router.AsyncHandlerFn) void {
         if (self.state == .Idle) {
             @atomicStore(u64, &self.active_stream_id, stream_id, .seq_cst);
             self.accepted_fd = accepted_fd;
             self.handler = handler;
+            self.async_handler = async_handler;
             self.state = .HeaderRecv;
         }
     }

@@ -33,7 +33,7 @@ test "Phase5: 真实物理内存搬运 - IoRequest 架构验证" {
     fake_body_src[0] = 0x02;
 
     var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
-    proto.begin_receive(TEST_STREAM_ID, -1, router.default_handler);
+    proto.begin_receive(TEST_STREAM_ID, -1, router.default_handler, null);
 
     // ── Step 1: HeaderRecv ──
     var io_req_hdr = io_uring.IoRequest{

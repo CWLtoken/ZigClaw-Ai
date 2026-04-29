@@ -107,7 +107,7 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     // ===========================================================
     // 阶段 4：Protocol 开始接收（传入 accepted_fd）
     // ===========================================================
-    proto.begin_receive(TEST_STREAM_ID, accepted_fd, router.default_handler);
+    proto.begin_receive(TEST_STREAM_ID, accepted_fd, router.default_handler, null);
     try testing.expectEqual(protocol.State.HeaderRecv, proto.state);
 
     // ===========================================================

@@ -47,7 +47,7 @@ test "Phase9: 业务处理器回显测试 - 同步版本" {
 
     // 使用 init_with_ring，注入 echo_handler
     var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring, echo_handler);
-    proto.begin_receive(42, -1, echo_handler);
+    proto.begin_receive(42, -1, echo_handler, null);
 
     // 准备数据缓冲区
     var fake_hdr: [13]u8 align(64) = undefined;

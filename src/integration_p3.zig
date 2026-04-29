@@ -31,7 +31,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     // ── 用例1：user_data 不匹配 → 立即 reset() → .Idle (I-C) ──
     proto.state = .Idle;
-    proto.begin_receive(42, -1, router.default_handler);
+    proto.begin_receive(42, -1, router.default_handler, null);
 
     var io_req1 = io_uring.IoRequest{ .stream_id = 99, .buf_ptr = null };
     {
@@ -60,7 +60,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
     // 重新 push_header，因为用例1的 reset() 释放了槽位
     window.push_header(test_header);
-    proto.begin_receive(42, -1, router.default_handler);
+    proto.begin_receive(42, -1, router.default_handler, null);
 
     var fake_hdr: [13]u8 align(64) = undefined;
     @memset(&fake_hdr, 0xAA);
