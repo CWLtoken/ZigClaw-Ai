@@ -32,34 +32,30 @@ test "Phase10: 异步回显处理器 - 回调模式" {
     
     // 创建 Protocol，注入异步处理器
     var proto = try protocol.Protocol.init(&window, &body_pool, router.default_handler);
-    proto.begin_receive(stream_id, -1, router.default_handler, router.async_echo_handler);
+    proto.async_handler = router.async_echo_handler;
+    proto.begin_receive(stream_id, -1, router.default_handler, proto.async_handler.?);
     
-    // 手动设置 pending_ctx（模拟 BodyDone 分支）
-    var ctx = router.RequestContext{
+    // 模拟 BodyDone 分支：手动设置 ctx（模拟 Protocol 内部行为）
+    proto.ctx = router.RequestContext{
         .stream_id = stream_id,
         .op_code = 0x02,
         .body_pool = &body_pool,
         .response_buf = [_]u8{0} ** 4096,
         .response_len = 0,
         .userdata = @ptrCast(&proto),
-        .body_len = @intCast(body.len), // 设置 body 长度 = 5
+        .body_len = @intCast(body.len),
     };
-    proto.pending_ctx = ctx;
     
-    // 调用 async_echo_handler（模拟 BodyDone 分支）
+    // 调用 async_echo_handler（模拟 BodyDone 分支进入 WaitingBusiness）
     const async_h = proto.async_handler.?;
-    async_h(&ctx, protocol.Protocol.onResponseReady);
-    
-    // 调试：打印 ctx.response_len 和 response_buf 内容
-    std.debug.print("ctx.response_len = {d}\n", .{ctx.response_len});
-    std.debug.print("ctx.response_buf[0..15] = {s}\n", .{ctx.response_buf[0..15]});
-    
-    // 验证：async_echo_handler 已经填充了 ctx.response_buf
-    const expected_response = "hello [ACK]\n";
-    try testing.expectEqualStrings(expected_response, ctx.response_buf[0..ctx.response_len]);
+    async_h(&proto.ctx, protocol.Protocol.onResponseReady, &proto.cancel_token);
     
     // 验证：onResponseReady 被调用，proto.response_ready 应该是 true
-    try testing.expect(proto.response_ready == true);
+    try testing.expect(@atomicLoad(bool, &proto.response_ready, .acquire) == true);
+    
+    // 验证：async_echo_handler 已经填充了 proto.ctx.response_buf
+    const expected_response = "hello [ACK]\n";
+    try testing.expectEqualStrings(expected_response, proto.ctx.response_buf[0..proto.ctx.response_len]);
     
     std.debug.print("\n✅ Phase10 异步回显测试通过：回调正确触发\n", .{});
 }

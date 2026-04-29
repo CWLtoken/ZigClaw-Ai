@@ -31,8 +31,9 @@ pub const Protocol = struct {
     current_io_req: io_uring.IoRequest,  // 当前 RECV/SEND 的 IoRequest（生命周期跟随 Protocol）
     current_iovec: io_uring.Iovec,       // 当前 RECV/SEND 的 iovec（生命周期跟随 Protocol）
     send_buf: [4096]u8,                 // 发送缓冲区（用于存储响应数据，与 router.RequestContext 同大小）
-    response_ready: bool = false,         // 异步业务处理完成标志
-    pending_ctx: ?router.RequestContext = null, // 保存待处理的请求上下文（异步路径）
+    response_ready: bool = false,         // 异步业务处理完成标志（用原子操作访问）
+    cancel_token: u32 = 0,               // 业务线程取消标志：0=未取消, 1=已请求取消
+    ctx: router.RequestContext = undefined, // 请求上下文（内部持有，异步路径使用）
     body_total_len: u32 = 0,             // 保存 body 总长度（从 header 中读取）
 
     pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool, handler: router.HandlerFn) io_uring.SyscallError!Protocol {
@@ -83,7 +84,8 @@ pub const Protocol = struct {
     // 由 async_handler 在业务完成后调用
     pub fn onResponseReady(ctx: *router.RequestContext) void {
         const self = @as(*Protocol, @ptrCast(@alignCast(ctx.userdata.?)));
-        self.response_ready = true;
+        // 使用原子操作设置 response_ready，确保内存可见性
+        @atomicStore(bool, &self.response_ready, true, .release);
     }
 
     pub fn step(self: *Protocol) State {
@@ -207,10 +209,10 @@ pub const Protocol = struct {
                     return self.state;
                 };
 
-                // 构造 RequestContext
+                // 构造 RequestContext（使用内部持有的 ctx）
                 const op_code = self.header_recv_buf[12]; // TokenStreamHeader 第 13 字节
 
-                var ctx = router.RequestContext{
+                self.ctx = router.RequestContext{
                     .stream_id = self.active_stream_id,
                     .op_code = op_code,
                     .body_pool = self.body_pool,
@@ -222,19 +224,17 @@ pub const Protocol = struct {
 
                 // 检查是否有异步处理器
                 if (self.async_handler) |async_h| {
-                    // 异步路径：保存 ctx，注册回调，进入 WaitingBusiness 状态
-                    self.pending_ctx = ctx;
-                    var pending_ptr = &self.pending_ctx.?;
-                    pending_ptr.userdata = @ptrCast(self); // 存储 Protocol 指针，供回调使用
-                    async_h(pending_ptr, onResponseReady); // 提交异步任务，立即返回
+                    // 异步路径：保存 ctx 指针，注册回调，进入 WaitingBusiness 状态
+                    self.ctx.userdata = @ptrCast(self); // 存储 Protocol 指针，供回调使用
+                    async_h(&self.ctx, onResponseReady, &self.cancel_token); // 提交异步任务，传入 cancel_token
                     self.state = .WaitingBusiness;
                 } else {
                     // 同步路径：直接调用处理器
-                    self.handler(&ctx);
+                    self.handler(&self.ctx);
 
                     // 复制响应数据到 send_buf
-                    @memcpy(self.send_buf[0..ctx.response_len], ctx.response_buf[0..ctx.response_len]);
-                    const send_len = ctx.response_len;
+                    @memcpy(self.send_buf[0..self.ctx.response_len], self.ctx.response_buf[0..self.ctx.response_len]);
+                    const send_len = self.ctx.response_len;
 
                     // 提交 SEND
                     self.current_iovec = io_uring.Iovec{
@@ -254,9 +254,10 @@ pub const Protocol = struct {
             },
             .WaitingBusiness => {
                 // 等待异步业务处理完成
-                if (self.response_ready) {
-                    // 业务完成，获取保存的上下文
-                    const ctx = &self.pending_ctx.?;
+                // 使用原子操作读取 response_ready，确保内存可见性
+                if (@atomicLoad(bool, &self.response_ready, .acquire)) {
+                    // 业务完成，使用内部持有的 ctx
+                    const ctx = &self.ctx;
 
                     // 复制响应数据到 send_buf
                     @memcpy(self.send_buf[0..ctx.response_len], ctx.response_buf[0..ctx.response_len]);
@@ -274,9 +275,8 @@ pub const Protocol = struct {
                     self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
                     _ = self.reactor.submit(1, 0) catch unreachable;
 
-                    // 清理状态
-                    self.response_ready = false;
-                    self.pending_ctx = null;
+                    // 清理状态（使用原子操作重置）
+                    @atomicStore(bool, &self.response_ready, false, .release);
 
                     // 进入 SendDone 状态
                     self.state = .SendDone;
@@ -317,6 +317,9 @@ pub const Protocol = struct {
     /// 重置协议状态，释放当前流资源
     /// 调用后需重新 push_header + begin_receive 才能接收新流
     pub fn reset(self: *Protocol) void {
+        // 请求取消正在运行的业务线程（如果存在）
+        @atomicStore(u32, &self.cancel_token, 1, .release);
+        
         // 释放当前流的 header（如果存在）
         if (self.active_stream_id != 0) {
             self.window.release_header(self.active_stream_id);
@@ -326,6 +329,9 @@ pub const Protocol = struct {
         self.active_stream_id = 0;
         self.accepted_fd = -1;
         self.recv_in_progress = false;
+        // 重置原子标志
+        @atomicStore(bool, &self.response_ready, false, .release);
+        @atomicStore(u32, &self.cancel_token, 0, .release);
         // 注意：current_io_req 和 current_iovec 不需要清理
         // header_recv_buf 和 send_buf 会在下次接收/发送时覆盖
     }

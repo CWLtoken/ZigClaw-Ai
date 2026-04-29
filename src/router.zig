@@ -20,8 +20,9 @@ pub const RequestContext = struct {
 pub const HandlerFn = *const fn (*RequestContext) void;
 
 /// 异步业务处理器签名：接收 RequestContext 和回调，立即返回
+/// cancel_token: 原子取消标志指针，业务线程应定期检查并提前退出
 /// 业务完成后调用 on_done(&ctx) 通知 Protocol
-pub const AsyncHandlerFn = *const fn (*RequestContext, *const fn (*RequestContext) void) void;
+pub const AsyncHandlerFn = *const fn (*RequestContext, *const fn (*RequestContext) void, *u32) void;
 
 /// 默认处理器：不进行任何业务处理，发送空响应
 pub fn default_handler(ctx: *RequestContext) void {
@@ -41,7 +42,8 @@ pub fn echo_handler(ctx: *RequestContext) void {
 }
 
 /// 异步回显处理器：模拟异步处理，注册回调后延迟触发
-pub fn async_echo_handler(ctx: *RequestContext, on_done: *const fn (*RequestContext) void) void {
+/// cancel_token: 原子取消标志，如果变为 1 则提前退出
+pub fn async_echo_handler(ctx: *RequestContext, on_done: *const fn (*RequestContext) void, cancel_token: *u32) void {
     // 使用 ctx.body_len 获取 body 数据
     const body_data = ctx.body_pool.get_read_slice(ctx.stream_id, ctx.body_len);
     var offset: usize = 0;
@@ -51,6 +53,14 @@ pub fn async_echo_handler(ctx: *RequestContext, on_done: *const fn (*RequestCont
     @memcpy(ctx.response_buf[offset..offset + ack.len], ack);
     offset += ack.len;
     ctx.response_len = @intCast(offset);
+    
+    // 检查取消标志（模拟业务线程定期检查）
+    if (@atomicLoad(u32, cancel_token, .acquire) == 1) {
+        // 被取消，设置一个特殊的响应
+        const cancel_msg = "CANCELLED\n";
+        @memcpy(ctx.response_buf[0..cancel_msg.len], cancel_msg);
+        ctx.response_len = @intCast(cancel_msg.len);
+    }
     
     // 调用回调通知 Protocol 业务已完成
     on_done(ctx);
