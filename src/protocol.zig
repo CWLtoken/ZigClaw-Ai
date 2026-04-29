@@ -5,6 +5,7 @@ const core = @import("core.zig");
 const storage = @import("storage.zig");
 const reactor = @import("reactor.zig");
 const io_uring = @import("io_uring.zig");
+const router = @import("router.zig");
 
 pub const State = union(enum) {
     Idle,
@@ -19,6 +20,7 @@ pub const Protocol = struct {
     reactor: reactor.Reactor,
     window: *storage.StreamWindow,
     body_pool: *storage.BodyBufferPool,
+    handler: router.HandlerFn,             // 业务处理器
     state: State,
     active_stream_id: u64,
     accepted_fd: i32,                    // 网络连接 fd
@@ -26,13 +28,14 @@ pub const Protocol = struct {
     recv_in_progress: bool,               // 避免重复提交 RECV
     current_io_req: io_uring.IoRequest,  // 当前 RECV/SEND 的 IoRequest（生命周期跟随 Protocol）
     current_iovec: io_uring.Iovec,       // 当前 RECV/SEND 的 iovec（生命周期跟随 Protocol）
-    send_buf: [256]u8,                  // 发送缓冲区（用于存储响应数据）
+    send_buf: [4096]u8,                 // 发送缓冲区（用于存储响应数据，与 router.RequestContext 同大小）
 
-    pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool) io_uring.SyscallError!Protocol {
+    pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool, handler: router.HandlerFn) io_uring.SyscallError!Protocol {
         return .{
             .reactor = reactor.Reactor.init(try io_uring.Ring.init()),
             .window = window,
             .body_pool = body_pool,
+            .handler = handler,
             .state = .Idle,
             .active_stream_id = 0,
             .accepted_fd = -1,
@@ -40,7 +43,7 @@ pub const Protocol = struct {
             .recv_in_progress = false,
             .current_io_req = undefined,
             .current_iovec = undefined,
-            .send_buf = [_]u8{0} ** 256,
+            .send_buf = [_]u8{0} ** 4096,
         };
     }
 
@@ -49,11 +52,13 @@ pub const Protocol = struct {
         window: *storage.StreamWindow,
         body_pool: *storage.BodyBufferPool,
         ring: *io_uring.Ring,
+        handler: router.HandlerFn,
     ) !Protocol {
         return .{
             .reactor = reactor.Reactor.init(ring.*), // 复制 Ring 实例，共享底层 io_uring
             .window = window,
             .body_pool = body_pool,
+            .handler = handler,
             .state = .Idle,
             .active_stream_id = 0,
             .accepted_fd = -1,
@@ -61,7 +66,7 @@ pub const Protocol = struct {
             .recv_in_progress = false,
             .current_io_req = undefined,
             .current_iovec = undefined,
-            .send_buf = [_]u8{0} ** 256,
+            .send_buf = [_]u8{0} ** 4096,
         };
     }
 
@@ -178,19 +183,29 @@ pub const Protocol = struct {
                 }
             },
             .BodyDone => {
-                // 接收完成，准备发送响应
-                // 从 body_pool 读取接收到的数据
-                const header = self.window.access_header(self.active_stream_id) orelse {
+                // 接收完成，调用业务处理器获取响应
+                _ = self.window.access_header(self.active_stream_id) orelse {
                     self.state = .{ .Error = .{ .reason = "header lost before send" } };
                     return self.state;
                 };
-                const body_len = mem.readInt(u32, header.data[8..12], .little); // 应该是 0（已全部接收）
-                _ = body_len;
 
-                // 构造响应数据（简化：发送固定响应）
-                const response = "RECV_OK\n";
-                @memcpy(self.send_buf[0..response.len], response);
-                const send_len = response.len;
+                // 构造 RequestContext
+                const op_code = self.header_recv_buf[12]; // TokenStreamHeader 第 13 字节
+
+                var ctx = router.RequestContext{
+                    .stream_id = self.active_stream_id,
+                    .op_code = op_code,
+                    .body_pool = self.body_pool,
+                    .response_buf = [_]u8{0} ** 4096,
+                    .response_len = 0,
+                };
+
+                // 调用业务处理器（同步）
+                self.handler(&ctx);
+
+                // 复制响应数据到 send_buf
+                @memcpy(self.send_buf[0..ctx.response_len], ctx.response_buf[0..ctx.response_len]);
+                const send_len = ctx.response_len;
 
                 // 提交 SEND
                 self.current_iovec = io_uring.Iovec{
@@ -219,8 +234,8 @@ pub const Protocol = struct {
                             self.state = .{ .Error = .{ .reason = "send stream mismatch" } };
                             return self.state;
                         }
-                        // SEND 完成，关闭 fd（实际应该在 reset() 中处理）
-                        // SendDone 是终态，需要上层调用 reset() 才能回到 Idle
+                        // SEND 完成，SendDone 是终态
+                        // 需要上层调用 reset() 才能回到 Idle
                     },
                 }
             },
@@ -229,10 +244,11 @@ pub const Protocol = struct {
         return self.state;
     }
 
-    pub fn begin_receive(self: *Protocol, stream_id: u64, accepted_fd: i32) void {
+    pub fn begin_receive(self: *Protocol, stream_id: u64, accepted_fd: i32, handler: router.HandlerFn) void {
         if (self.state == .Idle) {
             @atomicStore(u64, &self.active_stream_id, stream_id, .seq_cst);
             self.accepted_fd = accepted_fd;
+            self.handler = handler;
             self.state = .HeaderRecv;
         }
     }

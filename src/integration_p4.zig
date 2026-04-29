@@ -3,11 +3,11 @@
 const std = @import("std");
 const testing = std.testing;
 const mem = std.mem;
-
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
 const protocol = @import("protocol.zig");
+const router = @import("router.zig");
 
 var test_body_pool = storage.BodyBufferPool.init();
 
@@ -26,8 +26,8 @@ test "Phase4: IoRequest 架构 - 单线程 Happy Path" {
     @memset(&fake_hdr_buf, 0xAA);
     @memset(&fake_body_buf, 0xBB);
 
-    var proto = try protocol.Protocol.init(&window, &test_body_pool);
-    proto.begin_receive(TEST_STREAM_ID, -1);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
+    proto.begin_receive(TEST_STREAM_ID, -1, router.default_handler);
 
     // ── Step 1: HeaderRecv ──
     // 提交 SQE：读取 header (13 bytes)

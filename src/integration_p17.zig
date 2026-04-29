@@ -1,6 +1,7 @@
 // src/integration_p17.zig
 // ZigClaw V2.4 Phase7 | 多连接事件循环 | 两个并发流测试
 const std = @import("std");
+const router = @import("router.zig");
 const testing = std.testing;
 const mem = std.mem;
 const core = @import("core.zig");
@@ -39,12 +40,12 @@ test "Phase7: 多连接事件循环 - 两个并发流" {
     window2.push_header(header2);
 
     // 使用 init_with_ring 共享 Ring
-    var proto1 = try protocol.Protocol.init_with_ring(&window1, &body_pool1, &ring);
-    var proto2 = try protocol.Protocol.init_with_ring(&window2, &body_pool2, &ring);
+    var proto1 = try protocol.Protocol.init_with_ring(&window1, &body_pool1, &ring, router.default_handler);
+    var proto2 = try protocol.Protocol.init_with_ring(&window2, &body_pool2, &ring, router.default_handler);
 
     // 开始接收
-    proto1.begin_receive(1001, -1);
-    proto2.begin_receive(2002, -1);
+    proto1.begin_receive(1001, -1, router.default_handler);
+    proto2.begin_receive(2002, -1, router.default_handler);
 
     // 准备 fake 数据缓冲区和 IoRequest
     var fake_hdr1: [13]u8 align(64) = undefined;

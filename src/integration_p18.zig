@@ -1,6 +1,7 @@
 // src/integration_p18.zig
 // ZigClaw V2.4 Phase8 | 双向引擎 | 完整 RESPONSE 闭环测试
 const std = @import("std");
+const router = @import("router.zig");
 const testing = std.testing;
 const mem = std.mem;
 const core = @import("core.zig");
@@ -31,9 +32,9 @@ test "Phase8: 双向引擎 - 完整 RESPONSE 闭环" {
     mem.writeInt(u32, header.data[8..12], 50, .little);
     window.push_header(header);
 
-    // 使用 init_with_ring
-    var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring);
-    proto.begin_receive(42, -1);
+    // 使用 init_with_ring，注入 echo_handler
+    var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring, router.echo_handler);
+    proto.begin_receive(42, -1, router.echo_handler);
 
     // 准备数据缓冲区
     var fake_hdr: [13]u8 align(64) = undefined;

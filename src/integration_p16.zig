@@ -4,6 +4,7 @@
 // 架构师裁决：使用项目已有的 io_uring.Syscall 封装，不依赖 std.os.*
 
 const std = @import("std");
+const router = @import("router.zig");
 const testing = std.testing;
 const mem = std.mem;
 const core = @import("core.zig");
@@ -21,11 +22,11 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     // ===========================================================
     var window = storage.StreamWindow.init();
     var test_body_pool = storage.BodyBufferPool.init();
-    var proto = try protocol.Protocol.init(&window, &test_body_pool);
-
+    var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
+    
     // 初始状态：Idle
     try testing.expectEqual(protocol.State.Idle, proto.state);
-
+    
     // ===========================================================
     // 阶段 2：建立 TCP 连接（使用 io_uring.Syscall 封装）
     // ===========================================================
@@ -106,7 +107,7 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     // ===========================================================
     // 阶段 4：Protocol 开始接收（传入 accepted_fd）
     // ===========================================================
-    proto.begin_receive(TEST_STREAM_ID, accepted_fd);
+    proto.begin_receive(TEST_STREAM_ID, accepted_fd, router.default_handler);
     try testing.expectEqual(protocol.State.HeaderRecv, proto.state);
 
     // ===========================================================

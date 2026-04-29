@@ -1,14 +1,16 @@
 // src/integration_p5.zig
 // ZigClaw V2.4 Phase5 | IoRequest 架构 | 真实物理内存搬运
+// src/integration_p5.zig
+// ZigClaw V2.4 Phase5 | 真实物理内存搬运 | IoRequest 架构验证
 const std = @import("std");
 const testing = std.testing;
 const mem = std.mem;
-
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
 const reactor_mod = @import("reactor.zig");
 const protocol = @import("protocol.zig");
+const router = @import("router.zig");
 
 var test_body_pool = storage.BodyBufferPool.init();
 
@@ -30,8 +32,8 @@ test "Phase5: 真实物理内存搬运 - IoRequest 架构验证" {
     @memset(&fake_body_src, 0xBB);
     fake_body_src[0] = 0x02;
 
-    var proto = try protocol.Protocol.init(&window, &test_body_pool);
-    proto.begin_receive(TEST_STREAM_ID, -1);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
+    proto.begin_receive(TEST_STREAM_ID, -1, router.default_handler);
 
     // ── Step 1: HeaderRecv ──
     var io_req_hdr = io_uring.IoRequest{

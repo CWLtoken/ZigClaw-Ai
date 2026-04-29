@@ -1,4 +1,5 @@
-// Phase3 状态机全生命周期集成测试 | IoRequest 架构适配版
+// src/integration_p3.zig
+// ZigClaw V2.4 Phase3 | IoRequest 架构 | 真实物理内存搬运
 const std = @import("std");
 const testing = std.testing;
 const mem = std.mem;
@@ -6,6 +7,7 @@ const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
 const protocol = @import("protocol.zig");
+const router = @import("router.zig");
 
 var test_window = storage.StreamWindow.init();
 var test_body_pool = storage.BodyBufferPool.init();
@@ -25,11 +27,11 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     mem.writeInt(u32, test_header.data[8..12], 100, .little);
     window.push_header(test_header);
 
-    var proto = try protocol.Protocol.init(&window, &test_body_pool);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
 
     // ── 用例1：user_data 不匹配 → 立即 reset() → .Idle (I-C) ──
     proto.state = .Idle;
-    proto.begin_receive(42, -1);
+    proto.begin_receive(42, -1, router.default_handler);
 
     var io_req1 = io_uring.IoRequest{ .stream_id = 99, .buf_ptr = null };
     {
@@ -55,10 +57,10 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     // ── 用例2：HeaderRecv 成功 → .BodyRecv ──
     // 重新初始化 proto，避免状态污染
-    proto = try protocol.Protocol.init(&window, &test_body_pool);
+    proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
     // 重新 push_header，因为用例1的 reset() 释放了槽位
     window.push_header(test_header);
-    proto.begin_receive(42, -1);
+    proto.begin_receive(42, -1, router.default_handler);
 
     var fake_hdr: [13]u8 align(64) = undefined;
     @memset(&fake_hdr, 0xAA);

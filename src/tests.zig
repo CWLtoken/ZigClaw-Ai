@@ -21,6 +21,7 @@ const p14 = @import("integration_p14.zig");
 const p15 = @import("integration_p15.zig");
 const p17 = @import("integration_p17.zig");
 const p18 = @import("integration_p18.zig");
+const p19 = @import("integration_p19.zig");
 const p16 = @import("integration_p16.zig"); // 现在回归调试
 
 comptime {
@@ -40,4 +41,5 @@ comptime {
     _ = p16;
     _ = p17;
     _ = p18;
+    _ = p19;
 }
