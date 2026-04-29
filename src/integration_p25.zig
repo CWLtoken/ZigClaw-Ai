@@ -39,10 +39,13 @@ test "P25: 推理业务处理器集成测试（最小验证）" {
     const prompt = "Hello, ZigClaw!";
     mem.writeInt(u32, fake_hdr[8..12], @intCast(prompt.len), .little);
     
-    var io_req = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = &fake_hdr };
+    // 将 io_req 放在测试级别，确保指针在整个测试期间有效
+    var io_req_hdr = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = &fake_hdr };
 
     // 注入 HeaderRecv CQE
-    push_cqe_proto(&proto, @intFromPtr(&io_req), 13);
+    // 手动复制 fake_hdr 到 protocol 的 header_recv_buf（模拟 RECV 写入）
+    @memcpy(&proto.header_recv_buf, &fake_hdr);
+    push_cqe_proto(&proto, @intFromPtr(&io_req_hdr), 13);
 
     // 处理 HeaderRecv -> BodyRecv
     var state = proto.step();
@@ -52,8 +55,14 @@ test "P25: 推理业务处理器集成测试（最小验证）" {
     // 注入 BodyRecv CQE
     var fake_body: [4096]u8 align(64) = undefined;
     @memcpy(fake_body[0..prompt.len], prompt);
-    io_req.buf_ptr = &fake_body;
-    push_cqe_proto(&proto, @intFromPtr(&io_req), @intCast(prompt.len));
+    
+    // 手动复制 fake_body 到 body_pool 缓冲区（模拟 RECV 写入）
+    const dest_buf, const offset = proto.body_pool.get_write_slice(stream_id);
+    _ = offset;
+    @memcpy(dest_buf[0..prompt.len], fake_body[0..prompt.len]);
+    
+    var io_req_body = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = &fake_body };
+    push_cqe_proto(&proto, @intFromPtr(&io_req_body), @intCast(prompt.len));
 
     // 处理 BodyRecv，等待 BodyDone
     var iterations: u32 = 0;
