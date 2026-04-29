@@ -103,4 +103,7 @@ test "Phase5: 真实物理内存搬运 - IoRequest 架构验证" {
     const final_header = window.access_header(TEST_STREAM_ID).?;
     const final_len = mem.readInt(u32, final_header.data[8..12], .little);
     try testing.expectEqual(@as(u32, 0), final_len);
+
+    // 第一步调试：验证正常路径上 reset() 不会崩溃
+    proto.reset();
 }

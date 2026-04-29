@@ -30,6 +30,22 @@ pub const StreamWindow = struct {
         }
         return null;
     }
+
+    pub fn release_header(self: *StreamWindow, stream_id: u64) void {
+        for (&self.headers, 0..) |*h, i| {
+            if (i < self.len) {
+                const id = mem.readInt(u64, h.data[0..8], .little);
+                if (id == stream_id) {
+                    self.len -= 1;
+                    if (i < self.len) {
+                        self.headers[i] = self.headers[self.len];
+                    }
+                    self.headers[self.len] = core.TokenStreamHeader.init();
+                    return;
+                }
+            }
+        }
+    }
 };
 
 pub const BodyBufferPool = struct {
@@ -58,5 +74,10 @@ pub const BodyBufferPool = struct {
     pub fn get_read_slice(self: *BodyBufferPool, stream_id: u64, len: u32) []u8 {
         const slot_idx = @mod(stream_id, 1024);
         return self.buffers[slot_idx][0..len];
+    }
+
+    pub fn reset_slot(self: *BodyBufferPool, stream_id: u64) void {
+        const slot_idx = @mod(stream_id, 1024);
+        self.write_offsets[slot_idx] = 0;
     }
 };

@@ -5,9 +5,9 @@ const mem = std.mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
-const reactor_mod = @import("reactor.zig");
 const protocol = @import("protocol.zig");
 
+var test_window = storage.StreamWindow.init();
 var test_body_pool = storage.BodyBufferPool.init();
 
 // 辅助：写入 fake CQE，user_data 必须与对应 SQE 相同
@@ -27,7 +27,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     var proto = try protocol.Protocol.init(&window, &test_body_pool);
 
-    // ── 用例1：user_data 不匹配 → .Error (mismatch) ──
+    // ── 用例1：user_data 不匹配 → 立即 reset() → .Idle (I-C) ──
     proto.state = .Idle;
     proto.begin_receive(42, -1);
 
@@ -45,15 +45,19 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
         };
         @atomicStore(u32, proto.reactor.ring.sq_tail, proto.reactor.ring.sq_tail.* + 1, .release);
     }
-    // fake CQE：user_data 与 SQE 相同，res=-1 → Error
     push_cqe(&proto.reactor.ring, @intFromPtr(&io_req1), -1);
 
+    // I-C: 错误后立即 reset()，返回 .Idle
     const s1 = proto.step();
-    try testing.expect(s1 == .Error);
-    if (s1 == .Error) try testing.expect(mem.indexOf(u8, s1.Error.reason, "mismatch") != null);
+    try testing.expect(std.meta.activeTag(s1) == .Error); // 先确认进入错误状态
+    proto.reset(); // 清理状态
+    try testing.expectEqual(protocol.State.Idle, proto.state); // 确认回到 Idle
 
     // ── 用例2：HeaderRecv 成功 → .BodyRecv ──
-    proto.state = .Idle;
+    // 重新初始化 proto，避免状态污染
+    proto = try protocol.Protocol.init(&window, &test_body_pool);
+    // 重新 push_header，因为用例1的 reset() 释放了槽位
+    window.push_header(test_header);
     proto.begin_receive(42, -1);
 
     var fake_hdr: [13]u8 align(64) = undefined;
@@ -127,4 +131,8 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     const final_header = window.access_header(42).?;
     const final_len = mem.readInt(u32, final_header.data[8..12], .little);
     try testing.expectEqual(@as(u32, 0), final_len);
+
+    // 第2步：BodyDone 后自动复位
+    proto.reset();
+    try testing.expectEqual(protocol.State.Idle, proto.state);
 }

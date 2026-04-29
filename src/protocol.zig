@@ -11,6 +11,7 @@ pub const State = union(enum) {
     HeaderRecv,
     BodyRecv,
     BodyDone,
+    SendDone,
     Error: struct { reason: []const u8 },
 };
 
@@ -23,8 +24,9 @@ pub const Protocol = struct {
     accepted_fd: i32,                    // 网络连接 fd
     header_recv_buf: [13]u8,            // 报头接收暂存区（13 字节静态数组）
     recv_in_progress: bool,               // 避免重复提交 RECV
-    current_io_req: io_uring.IoRequest,  // 当前 RECV 的 IoRequest（生命周期跟随 Protocol）
-    current_iovec: io_uring.Iovec,       // 当前 RECV 的 iovec（生命周期跟随 Protocol）
+    current_io_req: io_uring.IoRequest,  // 当前 RECV/SEND 的 IoRequest（生命周期跟随 Protocol）
+    current_iovec: io_uring.Iovec,       // 当前 RECV/SEND 的 iovec（生命周期跟随 Protocol）
+    send_buf: [256]u8,                  // 发送缓冲区（用于存储响应数据）
 
     pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool) io_uring.SyscallError!Protocol {
         return .{
@@ -38,6 +40,28 @@ pub const Protocol = struct {
             .recv_in_progress = false,
             .current_io_req = undefined,
             .current_iovec = undefined,
+            .send_buf = [_]u8{0} ** 256,
+        };
+    }
+
+    // 使用外部传入的 Ring（测试用，实现多连接事件循环）
+    pub fn init_with_ring(
+        window: *storage.StreamWindow,
+        body_pool: *storage.BodyBufferPool,
+        ring: *io_uring.Ring,
+    ) !Protocol {
+        return .{
+            .reactor = reactor.Reactor.init(ring.*), // 复制 Ring 实例，共享底层 io_uring
+            .window = window,
+            .body_pool = body_pool,
+            .state = .Idle,
+            .active_stream_id = 0,
+            .accepted_fd = -1,
+            .header_recv_buf = [_]u8{0} ** 13,
+            .recv_in_progress = false,
+            .current_io_req = undefined,
+            .current_iovec = undefined,
+            .send_buf = [_]u8{0} ** 256,
         };
     }
 
@@ -153,7 +177,53 @@ pub const Protocol = struct {
                     },
                 }
             },
-            .BodyDone => {},
+            .BodyDone => {
+                // 接收完成，准备发送响应
+                // 从 body_pool 读取接收到的数据
+                const header = self.window.access_header(self.active_stream_id) orelse {
+                    self.state = .{ .Error = .{ .reason = "header lost before send" } };
+                    return self.state;
+                };
+                const body_len = mem.readInt(u32, header.data[8..12], .little); // 应该是 0（已全部接收）
+                _ = body_len;
+
+                // 构造响应数据（简化：发送固定响应）
+                const response = "RECV_OK\n";
+                @memcpy(self.send_buf[0..response.len], response);
+                const send_len = response.len;
+
+                // 提交 SEND
+                self.current_iovec = io_uring.Iovec{
+                    .iov_base = &self.send_buf,
+                    .iov_len = send_len,
+                };
+                self.current_io_req = io_uring.IoRequest{
+                    .stream_id = self.active_stream_id,
+                    .buf_ptr = &self.send_buf,
+                };
+                self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
+                _ = self.reactor.submit(1, 0) catch unreachable;
+
+                // 进入 SendDone 状态
+                self.state = .SendDone;
+            },
+            .SendDone => {
+                // 等待 SEND 完成
+                const event = self.reactor.poll();
+                switch (event) {
+                    .Idle => {
+                        // 等待中...
+                    },
+                    .IoComplete => |io| {
+                        if (io.user_data != self.active_stream_id) {
+                            self.state = .{ .Error = .{ .reason = "send stream mismatch" } };
+                            return self.state;
+                        }
+                        // SEND 完成，关闭 fd（实际应该在 reset() 中处理）
+                        // SendDone 是终态，需要上层调用 reset() 才能回到 Idle
+                    },
+                }
+            },
             .Error => {},
         }
         return self.state;
@@ -165,5 +235,21 @@ pub const Protocol = struct {
             self.accepted_fd = accepted_fd;
             self.state = .HeaderRecv;
         }
+    }
+
+    /// 重置协议状态，释放当前流资源
+    /// 调用后需重新 push_header + begin_receive 才能接收新流
+    pub fn reset(self: *Protocol) void {
+        // 释放当前流的 header（如果存在）
+        if (self.active_stream_id != 0) {
+            self.window.release_header(self.active_stream_id);
+        }
+        // 重置状态
+        self.state = .Idle;
+        self.active_stream_id = 0;
+        self.accepted_fd = -1;
+        self.recv_in_progress = false;
+        // 注意：current_io_req 和 current_iovec 不需要清理
+        // header_recv_buf 和 send_buf 会在下次接收/发送时覆盖
     }
 };
