@@ -29,6 +29,7 @@ const p22 = @import("integration_p22.zig");
 //const p23 = @import("integration_p23.zig"); // 暂时禁用，等待修复
 const p24 = @import("integration_p24.zig");
 const p25 = @import("integration_p25.zig");
+const p26 = @import("integration_p26.zig");
 
 comptime {
     _ = p3;
@@ -54,4 +55,5 @@ comptime {
     //_ = p23; // 暂时禁用
     _ = p24;
     _ = p25;
+    _ = p26;
 }
