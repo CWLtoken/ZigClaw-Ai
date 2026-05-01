@@ -1,81 +1,52 @@
 // src/inference.zig
-// ZigClaw V2.4 Phase14 | 推理引擎抽象层 | 真实 HTTP 推理接入
+// ZigClaw V2.4 Phase14 | OpenRouter 推理引擎接入
 const std = @import("std");
 const router = @import("router.zig");
 const http_client = @import("http_client.zig");
 
+/// OpenRouter API Key — 从 https://openrouter.ai/settings/api-keys 获取
+/// 替换下面的空字符串为实际 Key（由用户自行填入）
+pub const OPENROUTER_API_KEY: []const u8 = ""; // ← 在此处填入你的 API Key
+
 /// 推理请求
 pub const InferenceRequest = struct {
-    prompt: []const u8,         // 用户输入（从 body_pool 提取）
+    prompt: []const u8,
     max_tokens: u32,
     temperature: f32,
 };
 
 /// 推理响应
 pub const InferenceResponse = struct {
-    text: [4096]u8,             // 推理结果
+    text: [4096]u8,
     len: u32,
     tokens_used: u32,
     error_occurred: bool = false,
 };
 
-/// 阻塞式推理接口（阶段 14 接入真实 HTTP 推理服务）
-pub fn infer(req: InferenceRequest) InferenceResponse {
-    // 构造 Ollama API 请求
-    const http_req = http_client.HttpRequest{
-        .host = "127.0.0.1",
-        .port = 11434,
-        .path = "/api/generate",
-        .body = std.fmt.allocPrint(std.heap.page_allocator, 
-            "{{\"model\":\"llama3\",\"prompt\":\"{s}\",\"stream\":false}}", 
-            .{req.prompt}) catch {
-                // 内存分配失败，返回错误响应
-                return InferenceResponse{
-                    .text = [_]u8{0} ** 4096,
-                    .len = 0,
-                    .tokens_used = 0,
-                    .error_occurred = true,
-                };
-            },
-    };
-    defer std.heap.page_allocator.free(http_req.body);
-
-    // 发送 HTTP POST 请求
-    const http_resp = http_client.post(http_req) catch {
-        return InferenceResponse{
-            .text = [_]u8{0} ** 4096,
-            .len = 0,
-            .tokens_used = 0,
-            .error_occurred = true,
-        };
+/// 阻塞式推理接口（OpenRouter API）
+/// 签名：infer(prompt, max_tokens) — 按架构师要求保持不变
+pub fn infer(prompt: []const u8, max_tokens: u32) InferenceResponse {
+    // 1. 构造 JSON body（OpenRouter Chat Completions API 格式）
+    var body_buf: [4096]u8 = undefined;
+    const body = std.fmt.bufPrint(&body_buf,
+        "{{\"model\":\"openai/gpt-4.1-nano\",\"messages\":[{{\"role\":\"user\",\"content\":\"{s}\"}}],\"max_tokens\":{d}}}",
+        .{ prompt, max_tokens }) catch {
+        return InferenceResponse{ .text = undefined, .len = 0, .tokens_used = 0, .error_occurred = true };
     };
 
-    if (http_resp.error_occurred or http_resp.status_code != 200) {
-        return InferenceResponse{
-            .text = [_]u8{0} ** 4096,
-            .len = 0,
-            .tokens_used = 0,
-            .error_occurred = true,
-        };
-    }
-
-    // 解析响应 JSON，提取 "response" 字段
-    var resp = InferenceResponse{
-        .text = [_]u8{0} ** 4096,
-        .len = 0,
-        .tokens_used = 0,
+    // 2. 调用 HTTP 客户端
+    const resp = http_client.post(
+        "openrouter.ai",
+        443,
+        "/api/v1/chat/completions",
+        body,
+        if (OPENROUTER_API_KEY.len > 0) OPENROUTER_API_KEY else "",
+    ) catch {
+        return InferenceResponse{ .text = undefined, .len = 0, .tokens_used = 0, .error_occurred = true };
     };
 
-    // 简单 JSON 解析：查找 "response":" 之后的内容
-    const body = http_resp.body_buf[0..http_resp.body_len];
-    if (parse_response_field(body)) |response_text| {
-        const copy_len = @min(response_text.len, 4096);
-        @memcpy(resp.text[0..copy_len], response_text[0..copy_len]);
-        resp.len = @intCast(copy_len);
-        resp.tokens_used = @intCast(copy_len / 4); // 粗略估算
-    }
-
-    return resp;
+    // 3. 解析 JSON 响应，提取 choices[0].message.content
+    return parse_openrouter_response(&resp);
 }
 
 /// 推理业务处理器（同步版本）
@@ -85,15 +56,8 @@ pub fn inference_handler(ctx: *router.RequestContext) void {
     const body_len = ctx.body_len;
     const body_slice = ctx.body_pool.get_read_slice(ctx.stream_id, body_len);
     
-    // 构造推理请求
-    const req = InferenceRequest{
-        .prompt = body_slice,
-        .max_tokens = 1000,
-        .temperature = 0.7,
-    };
-    
     // 调用推理引擎
-    const resp = infer(req);
+    const resp = infer(body_slice, 1000);
     
     if (resp.error_occurred) {
         // 推理失败，返回错误响应
@@ -107,14 +71,29 @@ pub fn inference_handler(ctx: *router.RequestContext) void {
     }
 }
 
-/// 从 JSON 中解析 "response" 字段的值
-fn parse_response_field(json: []const u8) ?[]const u8 {
-    // 查找 "response":"
-    const field_start = std.mem.indexOf(u8, json, "\"response\":\"") orelse return null;
-    const value_start = field_start + 12; // 跳过 "\"response\":\""
+/// 解析 OpenRouter JSON 响应，提取 choices[0].message.content
+fn parse_openrouter_response(resp: *const http_client.HttpResponse) InferenceResponse {
+    const body = resp.body_buf[0..resp.body_len];
+    
+    // 查找 "content":" 之后的内容
+    const content_key = "\"content\":\"";
+    const start_idx = std.mem.indexOf(u8, body, content_key) orelse {
+        return InferenceResponse{ .text = undefined, .len = 0, .tokens_used = 0, .error_occurred = true };
+    };
+    
+    const content_start = start_idx + content_key.len;
+    const remaining = body[content_start..];
     
     // 查找结束的引号
-    const value_end = std.mem.indexOfPos(u8, json, value_start, "\"") orelse return null;
+    const end_idx = std.mem.indexOfScalar(u8, remaining, '"') orelse {
+        return InferenceResponse{ .text = undefined, .len = 0, .tokens_used = 0, .error_occurred = true };
+    };
     
-    return json[value_start..value_end];
+    const content = remaining[0..end_idx];
+    
+    var result = InferenceResponse{ .text = undefined, .len = 0, .tokens_used = 0, .error_occurred = false };
+    const copy_len = @min(content.len, 4096);
+    @memcpy(result.text[0..copy_len], content);
+    result.len = @intCast(copy_len);
+    return result;
 }

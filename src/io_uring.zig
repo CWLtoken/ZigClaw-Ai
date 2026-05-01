@@ -10,6 +10,12 @@ pub const AF_INET: u32 = 2;
 pub const SOCK_STREAM: u32 = 1;
 pub const INADDR_LOOPBACK: u32 = 0x0100007F;
 
+/// 主机字节序转网络字节序 (u16)
+/// 小端主机需要交换字节，大端主机保持不变
+pub fn htons(port: u16) u16 {
+    return @byteSwap(port);
+}
+
 pub const IOOp = enum(u8) {
     NOP = 0,           // IORING_OP_NOP
     ReadV = 1,         // IORING_OP_READV
@@ -377,8 +383,8 @@ pub const Syscall = struct {
     }
 
     /// connect(fd, addr, addrlen) - blocking connect (for test)
-    pub fn connect(fd: i32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
-        const rc = std_os.syscall3(.connect, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
+    pub fn connect(fd: u32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
+        const rc = std_os.syscall3(.connect, @as(usize, fd), @intFromPtr(addr), addrlen);
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
@@ -388,8 +394,8 @@ pub const Syscall = struct {
     }
 
     /// recv(fd, buf, len, flags) - blocking recv (for test verification)
-    pub fn recv(fd: i32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = std_os.syscall4(.recvfrom, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, flags);
+    pub fn recv(fd: u32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
+        const rc = std_os.syscall4(.recvfrom, @as(usize, fd), @intFromPtr(buf), len, @as(usize, flags));
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;

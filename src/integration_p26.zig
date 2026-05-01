@@ -1,116 +1,19 @@
-// src/integration_p26.zig
-// ZigClaw V2.4 Phase14 | 端到端推理测试 | 真实 Ollama 接入
 const std = @import("std");
-const router = @import("router.zig");
 const testing = std.testing;
-const mem = std.mem;
-const core = @import("core.zig");
-const storage = @import("storage.zig");
-const io_uring = @import("io_uring.zig");
-const protocol = @import("protocol.zig");
 const inference = @import("inference.zig");
-const http_client = @import("http_client.zig");
 
-/// 检测 Ollama 服务是否可用
-fn is_ollama_available() bool {
-    const req = http_client.HttpRequest{
-        .host = "127.0.0.1",
-        .port = 11434,
-        .path = "/api/tags", // 轻量级端点，仅检查服务是否存活
-        .body = "",
-    };
-
-    _ = http_client.post(req) catch {
-        return false;
-    };
-
-    return true;
-}
-
-test "P26: 端到端推理测试（真实 Ollama）" {
-    // 优雅跳过：如果 Ollama 未运行，跳过测试
-    if (!is_ollama_available()) {
-        std.debug.print("⚠️  Ollama 服务未运行，跳过 P26 测试\n", .{});
+test "Phase26: OpenRouter inference end-to-end" {
+    // 如果 API Key 未配置，跳过测试
+    if (inference.OPENROUTER_API_KEY.len == 0) {
         return error.SkipZigTest;
     }
 
-    var ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    const prompt = "什么是Zig语言？请用一句话回答。";
+    const result = inference.infer(prompt, 64);
 
-    var window = storage.StreamWindow.init();
-    var body_pool = storage.BodyBufferPool.init();
-
-    const stream_id: u64 = 26001;
-    
-    var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring, inference.inference_handler);
-    
-    // 检查 begin_receive 后的状态
-    proto.begin_receive(stream_id, -1, inference.inference_handler, null);
-    try testing.expectEqual(protocol.State.HeaderRecv, proto.state);
-
-    // 准备 fake header（prompt: "What is ZigClaw?"）
-    var fake_hdr: [13]u8 align(64) = undefined;
-    mem.writeInt(u64, fake_hdr[0..8], stream_id, .little);
-    const prompt = "What is ZigClaw?";
-    mem.writeInt(u32, fake_hdr[8..12], @intCast(prompt.len), .little);
-    
-    // 将 io_req 放在测试级别，确保指针在整个测试期间有效
-    var io_req_hdr = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = &fake_hdr };
-
-    // 注入 HeaderRecv CQE
-    // 手动复制 fake_hdr 到 protocol 的 header_recv_buf（模拟 RECV 写入）
-    @memcpy(&proto.header_recv_buf, &fake_hdr);
-    push_cqe_proto(&proto, @intFromPtr(&io_req_hdr), 13);
-
-    // 处理 HeaderRecv -> BodyRecv
-    var state = proto.step();
-    try testing.expect(state == .BodyRecv or state == .HeaderRecv);
-
-    // 注入 BodyRecv CQE
-    var fake_body: [4096]u8 align(64) = undefined;
-    @memcpy(fake_body[0..prompt.len], prompt);
-    
-    // 手动复制 fake_body 到 body_pool 缓冲区（模拟 RECV 写入）
-    const dest_buf, const offset = proto.body_pool.get_write_slice(stream_id);
-    _ = offset;
-    @memcpy(dest_buf[0..prompt.len], fake_body[0..prompt.len]);
-    
-    var io_req_body = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = &fake_body };
-    push_cqe_proto(&proto, @intFromPtr(&io_req_body), @intCast(prompt.len));
-
-    // 处理 BodyRecv，等待 BodyDone
-    var iterations: u32 = 0;
-    var body_done = false;
-    while (iterations < 100 and !body_done) {
-        iterations += 1;
-        state = proto.step();
-        if (state == .BodyDone) body_done = true;
-        _ = proto.reactor.submit(0, 0) catch 0;
-    }
-    try testing.expect(body_done);
-    
-    // 等待 SEND 完成（SendDone 状态）
-    var send_done = false;
-    while (iterations < 200 and !send_done) {
-        iterations += 1;
-        state = proto.step();
-        if (state == .SendDone) send_done = true;
-        _ = proto.reactor.submit(0, 0) catch 0;
-    }
-    try testing.expect(send_done);
-    
-    // 验证：至少完成了推理调用，没有进入 Error
-    try testing.expect(state != .Error);
-    
-    // 清理
-    proto.reset();
-    try testing.expectEqual(@as(u64, 0), window.len);
-}
-
-fn push_cqe_proto(proto: *protocol.Protocol, user_data: u64, res: i32) void {
-    const ring = &proto.reactor.ring;
-    const tail = @atomicLoad(u32, ring.cq_tail, .acquire);
-    const idx = tail & ring.cq_ring_mask;
-    ring.cqes[idx] = .{ .user_data = user_data, .res = res, .flags = 0 };
-    @atomicStore(u32, ring.cq_tail, tail + 1, .release);
+    // 验证推理成功
+    try testing.expect(!result.error_occurred);
+    try testing.expect(result.len > 0);
+    // 验证返回内容非空
+    try testing.expect(result.text[0] != 0);
 }

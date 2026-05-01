@@ -85,8 +85,9 @@ test "Phase16: Protocol active RECV full request-response cycle" {
     _ = try proto.reactor.submit(1, 0);
 
     // 客户端连接（使用 Syscall.connect）
-    const client_fd = try io_uring.Syscall.socket(io_uring.AF_INET, io_uring.SOCK_STREAM, 0);
-    defer io_uring.Syscall.close(@intCast(client_fd));
+    const client_fd_i32 = try io_uring.Syscall.socket(io_uring.AF_INET, io_uring.SOCK_STREAM, 0);
+    const client_fd: u32 = @intCast(client_fd_i32);
+    defer io_uring.Syscall.close(client_fd);
 
     var client_saddr: io_uring.SockAddrIn = .{};
     client_saddr.family = 2; // AF_INET = 2

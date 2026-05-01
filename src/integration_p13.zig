@@ -53,7 +53,8 @@ test "Phase13: io_uring ACCEPT + SEND via TCP loopback" {
     @atomicStore(u32, ring.sq_tail, sq_tail + 1, .release);
 
     // 6. connect (blocking, for test simplicity)
-    const connect_fd = try io_uring.Syscall.socket(2, 1, 0);
+    const connect_fd_i32 = try io_uring.Syscall.socket(2, 1, 0);
+    const connect_fd: u32 = @intCast(connect_fd_i32);
     defer io_uring.Syscall.close(@intCast(connect_fd));
     var server_addr = io_uring.SockAddrIn{
         .family = 2,

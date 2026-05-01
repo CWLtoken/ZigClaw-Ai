@@ -54,13 +54,15 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
 
     // 6. connect (blocking, for test simplicity)
     const connect_fd = try io_uring.Syscall.socket(2, 1, 0);
+    const connect_fd_u32: u32 = @intCast(connect_fd);
+    defer io_uring.Syscall.close(connect_fd_u32);
     defer io_uring.Syscall.close(@intCast(connect_fd));
     var server_addr = io_uring.SockAddrIn{
         .family = 2,
         .port = io_uring.Syscall.htons(actual_port),
         .addr = 0x0100007F,
     };
-    try io_uring.Syscall.connect(connect_fd, &server_addr, @sizeOf(io_uring.SockAddrIn));
+    try io_uring.Syscall.connect(connect_fd_u32, &server_addr, @sizeOf(io_uring.SockAddrIn));
 
     // 7. wait for ACCEPT completion
     const submitted_a = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
@@ -75,7 +77,6 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
 
     // 8. client sends "PING"
     const ping_msg = "PING";
-    const connect_fd_u32: u32 = @intCast(connect_fd);  // i32 -> u32，匹配 Syscall.send() 签名
     const sent = try io_uring.Syscall.send(connect_fd_u32, ping_msg.ptr, ping_msg.len, 0);
     try testing.expectEqual(@as(i32, ping_msg.len), sent);
 
@@ -148,7 +149,7 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
 
     // 13. client recv "PONG" to verify
     var client_recv_buf: [16]u8 = undefined;
-    const received = try io_uring.Syscall.recv(connect_fd, &client_recv_buf, client_recv_buf.len, 0);
+    const received = try io_uring.Syscall.recv(connect_fd_u32, &client_recv_buf, client_recv_buf.len, 0);
     try testing.expectEqual(@as(i32, pong_msg.len), received);
     try testing.expectEqualSlices(u8, pong_msg, client_recv_buf[0..@intCast(received)]);
 }
