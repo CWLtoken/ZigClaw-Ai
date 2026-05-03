@@ -13,11 +13,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    test_mod.linkLibC(); // 链接 libc，支持 C import
 
     // 3. 安装测试齿轮：TestOptions 只接收 root_module
     const test_runner = b.addTest(.{
         .root_module = test_mod,
     });
+    test_runner.linkLibC(); // 链接 libc，支持 C import
 
     // 4. 注册测试步骤：取 Run 的 step 指针，传给 dependOn
     const run_test = b.addRunArtifact(test_runner);
