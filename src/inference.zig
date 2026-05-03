@@ -25,7 +25,7 @@ pub const InferenceResult = struct {
 };
 
 /// 扁平低代码：直接函数，非方法
-/// 真实实现：调用 OpenRouter API
+/// 真实实现：调用 OpenRouter API（需要环境变量 OPENROUTER_API_KEY）
 pub fn infer(_: []const u8, _: u32) InferenceResult {
     const allocator = std.heap.page_allocator;
 
