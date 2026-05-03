@@ -3,9 +3,9 @@ const testing = std.testing;
 const inference = @import("inference.zig");
 
 test "Phase26: OpenRouter inference end-to-end" {
-    // 扁平直白：直接调用 infer，验证返回非空
+    // 扁平直白：直接调用 infer，模拟实现总是成功
     const prompt = "什么是Zig语言？请用一句话回答。";
-    const result = inference.infer(prompt, 64);
+    const result = inference.infer(prompt, 64);  // 模拟实现，2个参数
     
     // 验证推理成功（模拟实现总是成功）
     try testing.expect(!result.error_occurred);
