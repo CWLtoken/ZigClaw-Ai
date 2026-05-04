@@ -97,7 +97,7 @@ test "P21: 线程安全回调 — 异步 handler 在独立线程中运行" {
     var retries: u32 = 0;
     while (retries < 100000) {
         const state = proto.step();
-        if (state == .SendDone) {
+        if (state == .WaitRequest) {
             break;
         }
         if (state == .Error) {
@@ -108,7 +108,7 @@ test "P21: 线程安全回调 — 异步 handler 在独立线程中运行" {
         retries += 1;
     }
     
-    try testing.expect(proto.state == .SendDone);
+    try testing.expect(proto.state == .WaitRequest);
     
     // 验证响应数据
     const expected = "Hello, World! [ACK]\n";

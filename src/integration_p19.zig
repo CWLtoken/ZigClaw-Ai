@@ -89,11 +89,11 @@ test "Phase9: 业务处理器回显测试 - 同步版本" {
     @atomicStore(u32, ring.cq_tail, tail3 + 1, .release);
     
     const s3 = proto.step();
-    try testing.expectEqual(protocol.State.SendDone, s3);
+    try testing.expectEqual(protocol.State.WaitRequest, s3);
 
-    // 验证：SendDone 是终态
+    // 验证：WaitRequest 状态（Keep-Alive）
     const s4 = proto.step();
-    try testing.expectEqual(protocol.State.SendDone, s4);
+    try testing.expectEqual(protocol.State.WaitRequest, s4);
 
     // 清理
     proto.reset();

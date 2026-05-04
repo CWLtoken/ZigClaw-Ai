@@ -14,6 +14,7 @@ pub const State = union(enum) {
     BodyDone,
     WaitingBusiness,  // 等待异步业务处理完成
     SendDone,
+    WaitRequest,       // Keep-Alive: 等待下一个请求
     Error: struct { reason: []const u8 },
 };
 
@@ -248,8 +249,9 @@ pub const Protocol = struct {
                     self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
                     _ = self.reactor.submit(1, 0) catch unreachable;
 
-                    // 进入 SendDone 状态
-                    self.state = .SendDone;
+                    // 直接进入 WaitRequest（架构师要求：SendDone → WaitRequest 立即转换）
+                    self.state = .WaitRequest;
+                    return .WaitRequest;
                 }
             },
             .WaitingBusiness => {
@@ -278,8 +280,9 @@ pub const Protocol = struct {
                     // 清理状态（使用原子操作重置）
                     @atomicStore(bool, &self.response_ready, false, .release);
 
-                    // 进入 SendDone 状态
-                    self.state = .SendDone;
+                    // 直接进入 WaitRequest（架构师要求：SendDone → WaitRequest 立即转换）
+                    self.state = .WaitRequest;
+                    return .WaitRequest;
                 }
             },
             .SendDone => {
@@ -299,19 +302,55 @@ pub const Protocol = struct {
                     },
                 }
             },
+            .WaitRequest => {
+                // Keep-Alive 状态：等待下一个请求或客户端断开
+                // 简化实现：不提交 RECV，让上层检测新请求并调用 begin_receive
+                // 上层可以通过检查 state == .WaitRequest 来知道连接准备好接收新请求
+                // 客户端断开检测由上层（如 server）通过其他方式处理
+            },
             .Error => {},
         }
         return self.state;
     }
 
     pub fn begin_receive(self: *Protocol, stream_id: u64, accepted_fd: i32, handler: router.HandlerFn, async_handler: ?router.AsyncHandlerFn) void {
-        if (self.state == .Idle) {
+        if (self.state == .Idle or self.state == .WaitRequest) {
+            if (self.state == .WaitRequest) {
+                // 从 WaitRequest 状态恢复：清理旧状态
+                if (self.active_stream_id != 0) {
+                    self.window.release_header(self.active_stream_id);
+                }
+                self.recv_in_progress = false;
+                self.header_recv_buf = [_]u8{0} ** 13;
+                @atomicStore(bool, &self.response_ready, false, .release);
+                @atomicStore(u32, &self.cancel_token, 0, .release);
+            }
             @atomicStore(u64, &self.active_stream_id, stream_id, .seq_cst);
             self.accepted_fd = accepted_fd;
             self.handler = handler;
             self.async_handler = async_handler;
             self.state = .HeaderRecv;
         }
+    }
+
+    /// 为下一个请求重置状态（Keep-Alive）
+    /// 只重置必要状态，绝不关闭 accepted_fd
+    /// 用于 WaitRequest 状态超时或客户端断开后的清理
+    pub fn reset_state_for_next_request(self: *Protocol) void {
+        // 释放当前流的 header（如果存在）
+        if (self.active_stream_id != 0) {
+            self.window.release_header(self.active_stream_id);
+        }
+        // 只重置必要状态，保持 accepted_fd 存活
+        self.state = .Idle;
+        self.active_stream_id = 0; // 重置 stream_id，等待新请求
+        self.recv_in_progress = false;
+        // 清空 header_recv_buf（准备接收新请求的报头）
+        self.header_recv_buf = [_]u8{0} ** 13;
+        // 重置原子标志
+        @atomicStore(bool, &self.response_ready, false, .release);
+        @atomicStore(u32, &self.cancel_token, 0, .release);
+        // 注意：accepted_fd 保持不变！
     }
 
     /// 重置协议状态，释放当前流资源

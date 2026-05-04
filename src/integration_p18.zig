@@ -63,15 +63,15 @@ test "Phase8: 双向引擎 - 完整 RESPONSE 闭环" {
     // 需要提交 SEND SQE
     _ = proto.reactor.submit(0, 0) catch 0;
 
-    // 步骤 4: 模拟 SEND 完成，触发进入 SendDone
+    // 步骤 4: 模拟 SEND 完成，触发进入 WaitRequest
     // 注入 SEND 的 CQE
     push_cqe(&ring, @intFromPtr(&io_req), @intCast(proto.send_buf.len));
     const s3 = proto.step();
-    try testing.expectEqual(protocol.State.SendDone, s3);
+    try testing.expectEqual(protocol.State.WaitRequest, s3);
 
-    // 验证：SendDone 是终态
+    // 验证：WaitRequest 状态（Keep-Alive）
     const s4 = proto.step();
-    try testing.expectEqual(protocol.State.SendDone, s4);
+    try testing.expectEqual(protocol.State.WaitRequest, s4);
 
     // 清理
     proto.reset();
