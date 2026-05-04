@@ -1,5 +1,27 @@
 # ZigClaw v2.4 Changelog
 
+## [v4.1-p33-keepalive] - 2026-05-04
+
+### 阶段18封板 🏁
+
+#### 完成项
+- ✅ **选项A**：示例图像子脑（LCG 64维）
+- ✅ **选项B**：Keep-Alive + 连接复用（WaitRequest状态 + P22-S3 + P33）
+- ⏸️ **选项C**：本地非TLS推理引擎接入（留待阶段19）
+
+#### 测试基线
+- **50/50 全绿**（P3-P33全部通过）
+- P33验证：Phase 1 + Phase 2 双请求完整生命周期
+- 关键修复：`debug_reset_cq` 解决跨请求CQ状态异常
+
+#### 技术细节
+- Keep-Alive连接复用验证：单连接双请求场景
+- 状态转换：HeaderRecv → BodyRecv → BodyDone → SendDone → WaitRequest → 重置 → 新请求
+- 连接fd保持，window槽位正确隔离
+- Protocol全部安全检查保留（未注释）
+
+---
+
 ## 发布日期：2026-05-04
 
 ## 概览
