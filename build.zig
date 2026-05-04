@@ -3,26 +3,14 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    // 1. 标准配置
-    const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
-
-    // 2. 锻造测试模块：target/optimize 必须放在这里
-    const test_mod = b.createModule(.{
-        .root_source_file = b.path("src/tests.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    // 3. 安装测试齿轮：TestOptions 只接收 root_module
-    const test_runner = b.addTest(.{
-        .root_module = test_mod,
-    });
-    // test_runner.linkLibC(); // Zig 0.16: linkLibC not available on test runner
-
-    // 4. 注册测试步骤：取 Run 的 step 指针，传给 dependOn
-    const run_test = b.addRunArtifact(test_runner);
+    // 添加自定义 test 步骤：直接调用 zig test
     const test_step = b.step("test", "Run ZigClaw Phase 3-5 Integration Tests");
-    test_step.dependOn(&run_test.step);
-
+    const zig_exe = b.findProgram(&.{"zig"}, &.{}) catch unreachable;
+    const test_cmd = b.addSystemCommand(&.{
+        zig_exe,
+        "test",
+        "src/tests.zig",
+        "-ODebug",
+    });
+    test_step.dependOn(&test_cmd.step);
 }
