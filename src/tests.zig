@@ -34,6 +34,7 @@ const p30 = @import("integration_p30.zig");
 const p31 = @import("integration_p31.zig"); // P31: infer_from_tokens 全链路验证
 const p32 = @import("integration_p32.zig"); // P32: 图像子脑（LCG 256维）全链路
 const p33 = @import("integration_p33.zig");
+const p34 = @import("integration_p34.zig");
 const tok = @import("token.zig");
 const quant = @import("quantizer.zig");
 const sb = @import("sub_brain.zig");
@@ -68,6 +69,7 @@ comptime {
     _ = p31; // P31: infer_from_tokens 全链路验证
     _ = p32; // P32: 图像子脑（LCG 256维）全链路
     _ = p33;
+    _ = p34; // P34: 端到端推理验证（Ollama）
     _ = tok;
     _ = quant;
     _ = sb;
