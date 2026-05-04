@@ -1,6 +1,7 @@
 // src/protocol.zig
 // ZigClaw V2.4 | 系统大脑 | DMA自省 | ALU溢出防御 | Phase5真实内存搬运
-const mem = @import("std").mem;
+const std = @import("std");
+const mem = std.mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const reactor = @import("reactor.zig");
@@ -87,7 +88,30 @@ pub const Protocol = struct {
         mem.writeInt(u32, self.header_recv_buf[8..12], body_len, .little);
         self.header_recv_buf[12] = op_code;
     }
-
+    
+    // 测试辅助：向内部 Ring 推送 fake CQE（仅用于测试）
+    pub fn push_cqe_for_test(self: *Protocol, user_data: u64, res: u32) void {
+        const ring = &self.reactor.ring;
+        const head = @atomicLoad(u32, ring.cq_head, .acquire);
+        const tail = @atomicLoad(u32, ring.cq_tail, .acquire);
+        std.debug.print("[push_cqe] before: head={}, tail={}, user_data={}\n", .{ head, tail, user_data });
+        
+        const idx = tail & ring.cq_ring_mask;
+        ring.cqes[idx] = .{ .user_data = user_data, .res = @as(i32, @intCast(res)), .flags = 0 };
+        @atomicStore(u32, ring.cq_tail, tail + 1, .release);
+        
+        const new_tail = @atomicLoad(u32, ring.cq_tail, .acquire);
+        std.debug.print("[push_cqe] after: head={}, tail={}\n", .{ head, new_tail });
+    }
+    
+    // 测试辅助：调试 reactor.poll() 看到的状态（仅用于测试）
+    pub fn debug_poll(self: *Protocol) void {
+        const ring = &self.reactor.ring;
+        const head = @atomicLoad(u32, ring.cq_head, .acquire);
+        const tail = @atomicLoad(u32, ring.cq_tail, .acquire);
+        std.debug.print("[debug_poll] head={}, tail={}\n", .{ head, tail });
+    }
+    
     // onResponseReady：异步业务完成回调（静态函数）
     // 由 async_handler 在业务完成后调用
     pub fn onResponseReady(ctx: *router.RequestContext) void {
