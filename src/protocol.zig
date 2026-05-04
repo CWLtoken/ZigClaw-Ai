@@ -249,9 +249,8 @@ pub const Protocol = struct {
                     self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
                     _ = self.reactor.submit(1, 0) catch unreachable;
 
-                    // 直接进入 WaitRequest（架构师要求：SendDone → WaitRequest 立即转换）
-                    self.state = .WaitRequest;
-                    return .WaitRequest;
+                    // 进入 SendDone 状态（之后会立即转到 WaitRequest）
+                    self.state = .SendDone;
                 }
             },
             .WaitingBusiness => {
@@ -286,21 +285,10 @@ pub const Protocol = struct {
                 }
             },
             .SendDone => {
-                // 等待 SEND 完成
-                const event = self.reactor.poll();
-                switch (event) {
-                    .Idle => {
-                        // 等待中...
-                    },
-                    .IoComplete => |io| {
-                        if (io.user_data != self.active_stream_id) {
-                            self.state = .{ .Error = .{ .reason = "send stream mismatch" } };
-                            return self.state;
-                        }
-                        // SEND 完成，SendDone 是终态
-                        // 需要上层调用 reset() 才能回到 Idle
-                    },
-                }
+                // SEND 完成，立即进入 WaitRequest（架构师要求：SendDone → WaitRequest 立即转换）
+                // 不关闭 accepted_fd，等待下一个请求或客户端断开
+                self.state = .WaitRequest;
+                return .WaitRequest;
             },
             .WaitRequest => {
                 // Keep-Alive 状态：等待下一个请求或客户端断开
