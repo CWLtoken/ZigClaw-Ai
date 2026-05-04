@@ -124,8 +124,56 @@ test "Quantizer: 余弦相似度计算" {
     try testing.expectApproxEqAbs(@as(f32, 1.0), sim, 0.001);
 }
 
-// 暂时禁用：Zig 0.16 无 rand 模块，需替换为 LCG 实现
-// test "Quantizer: 1000组随机向量，余弦相似度≥0.92" {
-//     ...
-// }
+// 最小 LCG 随机数生成器（替代 Zig 0.16 缺失的 std.rand 模块）
+const Lcg = struct {
+    state: u64,
+
+    const MULTIPLIER: u64 = 6364136223846793005;
+    const INCREMENT: u64 = 1442695040888963407;
+
+    fn init(seed: u64) Lcg {
+        return .{ .state = seed };
+    }
+
+    fn next(self: *Lcg) u64 {
+        self.state = MULTIPLIER *% self.state +% INCREMENT;
+        return self.state;
+    }
+
+    /// 返回 [0, 1) 区间的 f32
+    fn nextFloat(self: *Lcg) f32 {
+        const val = self.next();
+        return @as(f32, @floatFromInt(val >> 40)) / @as(f32, @floatFromInt(1 << 24));
+    }
+};
+
+test "Quantizer: 1000组随机向量，余弦相似度≥0.92" {
+    const q = Quantizer.init();
+    var rng = Lcg.init(12345);
+
+    var pass_count: u32 = 0;
+    const total: u32 = 1000;
+
+    var n: u32 = 0;
+    while (n < total) : (n += 1) {
+        // 生成随机向量（2维，因为码本只初始化了前2维）
+        var vec: [2]f32 = undefined;
+        vec[0] = rng.nextFloat() * 2.0 - 1.0; // [-1, 1]
+        vec[1] = rng.nextFloat() * 2.0 - 1.0;
+
+        var tok = token.Token.initVector(vec[0..]);
+        q.quantize(vec[0..], &tok) catch continue;
+
+        var reconstructed: [2]f32 = undefined;
+        q.dequantize(&tok, reconstructed[0..]);
+
+        const sim = cosineSimilarity(vec[0..], reconstructed[0..]);
+        if (sim >= 0.92) {
+            pass_count += 1;
+        }
+    }
+
+    const pass_rate = @as(f32, @floatFromInt(pass_count)) / @as(f32, @floatFromInt(total));
+    try testing.expect(pass_rate >= 0.92);
+}
 
