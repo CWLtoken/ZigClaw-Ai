@@ -78,7 +78,7 @@ pub const Quantizer = struct {
 };
 
 // 计算余弦相似度
-fn cosineSimilarity(a: []const f32, b: []const f32) f32 {
+pub fn cosineSimilarity(a: []const f32, b: []const f32) f32 {
     const len = if (a.len < b.len) a.len else b.len;
     if (len == 0) return 0.0;
 

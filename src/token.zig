@@ -3,7 +3,10 @@ const math = @import("std").math;
 const testing = @import("std").testing;
 
 // Token 维度上限（架构师设计）
-pub const MAX_TOKEN_DIM = 64;
+// Token 总大小 ≤ 512 字节：tpe(1) + dim(2) + data(MAX_TOKEN_DIM*4) + text(64) + text_len(1) + padding ≈ MAX_TOKEN_DIM*4 + 72 ≤ 512
+// => MAX_TOKEN_DIM*4 ≤ 440 => MAX_TOKEN_DIM ≤ 110
+// quantize 函数需要 vector.len + 1 个 f32 空间（索引 + 残差），所以 MAX_TOKEN_DIM 需要 >= 65（对于64维向量）
+pub const MAX_TOKEN_DIM = 110;
 
 // Token 类型枚举
 pub const TokenType = enum(u8) {

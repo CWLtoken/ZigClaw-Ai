@@ -25,13 +25,32 @@ fn textExtract(_: []const u8, _: []f32) anyerror!void {
     return error.TextPassthrough;
 }
 
-// 模拟图像子脑：固定输出向量（用于测试）
-fn imageExtract(input: []const u8, output: []f32) anyerror!void {
-    _ = input;
-    if (output.len < 2) return error.BufferTooSmall;
-    // 简单模拟：前两个维度设为固定值
-    output[0] = 0.5;
-    output[1] = 0.5;
+// LCG 随机数生成器（与 quantizer.zig 保持一致）
+fn lcgRandom(state: *u32) u32 {
+    state.* = state.* *% 1103515245 +% 12345;
+    return state.*;
+}
+
+// 基于LCG的图像特征提取：输出 output.len 维向量
+fn imageExtractLcg(input: []const u8, output: []f32) anyerror!void {
+    if (output.len == 0) return error.BufferTooSmall;
+    
+    // 使用 FNV-1a 哈希生成种子（更好的分布）
+    var seed: u32 = 2166136261;
+    for (input) |byte| {
+        seed = (seed ^ @as(u32, byte)) *% 16777619;
+    }
+    // 加入长度信息
+    seed = (seed ^ @as(u32, @intCast(input.len))) *% 16777619;
+    if (seed == 0) seed = 12345;
+    
+    // 生成 output.len 维特征向量（范围 [-1, 1]）
+    var i: usize = 0;
+    while (i < output.len) : (i += 1) {
+        const rand_val = lcgRandom(&seed);
+        // 归一化到 [-1, 1]
+        output[i] = (@as(f32, @floatFromInt(rand_val & 0x7FFFFFFF)) / @as(f32, @floatFromInt(0x7FFFFFFF))) * 2.0 - 1.0;
+    }
     return;
 }
 
@@ -45,11 +64,21 @@ pub fn getTextBrain() SubBrain {
     };
 }
 
-// 获取模拟图像子脑（用于测试）
+// 获取LCG图像子脑（64维特征向量，与MAX_TOKEN_DIM一致）
+pub fn getImageBrainLcg() SubBrain {
+    return SubBrain{
+        .name = "image_lcg_64d",
+        .extract = imageExtractLcg,
+        .input_modality = .Image,
+        .dim = 64,
+    };
+}
+
+// 获取模拟图像子脑（用于测试，2维）
 pub fn getImageBrain() SubBrain {
     return SubBrain{
         .name = "image_mock",
-        .extract = imageExtract,
+        .extract = imageExtractLcg, // 现在也使用LCG，但只填充前2维
         .input_modality = .Image,
         .dim = 2,
     };
