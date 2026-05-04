@@ -80,6 +80,13 @@ pub const Protocol = struct {
             .response_ready = false,
         };
     }
+    
+    // 测试辅助：设置 header_recv_buf（仅用于测试）
+    pub fn set_header_recv_buf(self: *Protocol, stream_id: u64, body_len: u32, op_code: u8) void {
+        mem.writeInt(u64, self.header_recv_buf[0..8], stream_id, .little);
+        mem.writeInt(u32, self.header_recv_buf[8..12], body_len, .little);
+        self.header_recv_buf[12] = op_code;
+    }
 
     // onResponseReady：异步业务完成回调（静态函数）
     // 由 async_handler 在业务完成后调用
@@ -136,6 +143,7 @@ pub const Protocol = struct {
                             self.state = .{ .Error = .{ .reason = "dma memory corruption" } };
                             return self.state;
                         }
+                        
                         // 保存 body 总长度
                         self.body_total_len = mem.readInt(u32, hdr.data[8..12], .little);
                         self.recv_in_progress = false;
