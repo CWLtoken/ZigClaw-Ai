@@ -30,6 +30,11 @@ const p22 = @import("integration_p22.zig");
 const p24 = @import("integration_p24.zig");
 const p25 = @import("integration_p25.zig");
 const p26 = @import("integration_p26.zig");
+const p30 = @import("integration_p30.zig");
+const tok = @import("token.zig");
+const quant = @import("quantizer.zig");
+const sb = @import("sub_brain.zig");
+const orch = @import("orchestrator.zig");
 
 comptime {
     _ = p3;
@@ -56,4 +61,9 @@ comptime {
     _ = p24;
     _ = p25;
     _ = p26;
+    _ = p30;
+    _ = tok;
+    _ = quant;
+    _ = sb;
+    _ = orch;
 }
