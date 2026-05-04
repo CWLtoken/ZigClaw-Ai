@@ -112,6 +112,14 @@ pub const Protocol = struct {
         std.debug.print("[debug_poll] head={}, tail={}\n", .{ head, tail });
     }
     
+    /// 测试辅助函数：显式重置 CQ 状态到一致状态
+    /// 仅在手动注入 CQE 的测试场景中使用，生产代码不应调用
+    pub fn debug_reset_cq(self: *Protocol) void {
+        const ring = &self.reactor.ring;
+        @atomicStore(u32, ring.cq_head, 0, .release);
+        @atomicStore(u32, ring.cq_tail, 0, .release);
+    }
+    
     // onResponseReady：异步业务完成回调（静态函数）
     // 由 async_handler 在业务完成后调用
     pub fn onResponseReady(ctx: *router.RequestContext) void {
