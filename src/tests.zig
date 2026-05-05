@@ -51,6 +51,13 @@ const sb = @import("sub_brain.zig");
 const orch = @import("orchestrator.zig");
 const ac = @import("async_coordinator.zig");
 
+// 新模块：架构师五层架构对齐（P42-P46）
+const hp = @import("heat_pool.zig");
+const sp = @import("ssd_persist.zig");
+const vi = @import("vector_index.zig");
+const rt = @import("route_table.zig");
+const ib = @import("ibus.zig");
+
 comptime {
     _ = p3;
     _ = p4;
@@ -93,4 +100,10 @@ comptime {
     _ = sb;
     _ = orch;
     _ = ac; // async_coordinator 测试
+    // 新模块测试（P42-P46）
+    _ = hp;
+    _ = sp;
+    _ = vi;
+    _ = rt;
+    _ = ib;
 }

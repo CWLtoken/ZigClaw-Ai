@@ -1,4 +1,5 @@
 // src/protocol.zig
+// 执行层 | Layer: Execution
 // ZigClaw V2.4 | 系统大脑 | DMA自省 | ALU溢出防御 | Phase5真实内存搬运
 const std = @import("std");
 const mem = std.mem;
