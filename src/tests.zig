@@ -40,6 +40,8 @@ const p36 = @import("integration_p36.zig");
 const p37 = @import("integration_p37.zig");
 const p38 = @import("integration_p38.zig");
 const p39 = @import("integration_p39.zig");
+const p40 = @import("integration_p40.zig");
+const p41 = @import("integration_p41.zig");
 const tok = @import("token.zig");
 const quant = @import("quantizer.zig");
 const sb = @import("sub_brain.zig");
@@ -81,6 +83,8 @@ comptime {
     _ = p37; // P37: 客服场景端到端闭环测试
     _ = p38; // P38: Protocol HTTP 推理测试
     _ = p39; // P39: 多连接 HTTP 压力测试
+    _ = p40; // P40: 可观测性测试
+    _ = p41; // P41: 故障注入与恢复测试
     _ = tok;
     _ = quant;
     _ = sb;

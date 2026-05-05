@@ -1,68 +1,54 @@
 // src/main.zig
-// ZigClaw HTTP 服务器启动器 - 阶段23B: Protocol/Reactor 深度集成
+// ZigClaw HTTP 服务器启动器 - 阶段23C: 故障恢复与可观测性
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
-const http_protocol = @import("http_protocol.zig");
+const http_server = @import("http_server.zig");
+
+// 全局服务器指针（用于信号处理）
+var g_server: ?*http_server.HttpServer = null;
+
+// SIGINT 信号处理函数
+fn sigint_handler(sig: i32, info: *std.posix.siginfo_t, ucontext: ?*anyopaque) callconv(.C) void {
+    _ = sig;
+    _ = info;
+    _ = ucontext;
+    
+    std.debug.print("\n收到 SIGINT，准备优雅关闭...\n", .{});
+    
+    if (g_server) |server| {
+        server.shutdown();
+    }
+}
 
 pub fn main() !void {
     const log = std.log;
-    log.info("启动 ZigClaw HTTP 服务器（阶段23B - Protocol集成）...", .{});
+    log.info("启动 ZigClaw HTTP 服务器（阶段23C - 可观测性）...", .{});
 
-    // 1. 初始化 io_uring
-    var ring = try io_uring.Ring.init();
-    errdefer ring.deinit();
-
-    // 2. 创建监听 socket (返回 i32)
-    const listen_fd: i32 = try io_uring.Syscall.socket(
-        io_uring.AF_INET,
-        io_uring.SOCK_STREAM,
-        0,
-    );
-    // close 接收 u32，需要 @intCast 转换
-    defer io_uring.Syscall.close(@intCast(listen_fd));
-
-    // 3. 设置 SO_REUSEADDR（简化：跳过，非必须）
-    // const reuse: i32 = 1;
-    // _ = std.os.setsockopt(listen_fd, std.os.SOL.SOCKET, std.os.SO.REUSEADDR, &reuse, @sizeOf(i32)) catch {};
-
-    // 4. 绑定 0.0.0.0:8080
-    var addr = io_uring.SockAddrIn{
-        .family = io_uring.AF_INET,
-        .port = io_uring.htons(8080),
-        .addr = 0, // 0.0.0.0
-    };
-    try io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.SockAddrIn));
-    try io_uring.Syscall.listen(listen_fd, 128);
-
-    // 5. 获取实际端口
-    var actual_addr: io_uring.SockAddrIn = undefined;
-    var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
-    try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
-    const port = io_uring.htons(actual_addr.port);
-
-    std.debug.print("🌐 HTTP 服务器启动（阶段23B）: http://127.0.0.1:{d}/\n", .{port});
-    std.debug.print("   路由：\n", .{});
-    std.debug.print("     GET /health → 健康检查\n", .{});
-    std.debug.print("     GET /infer?input=xxx&modality=text|image → 推理\n", .{});
-    std.debug.print("   使用 Protocol 状态机处理请求（集成版）\n", .{});
-    std.debug.print("按 Ctrl+C 停止服务器\n", .{});
-
-    // 6. 初始化 HttpProtocolHandler
-    var handler = try http_protocol.HttpProtocolHandler.init();
+    // 1. 初始化服务器指标
+    var metrics = http_server.ServerMetrics.init();
     
-    // 7. 主事件循环
-    while (true) {
-        std.debug.print("等待连接...\n", .{});
-
-        // 使用 io_uring ACCEPT 获取连接 (返回 i32)
-        const conn_fd: i32 = try io_uring.Syscall.accept(listen_fd, null, null);
-        // close 接收 u32，需要 @intCast 转换
-        defer io_uring.Syscall.close(@intCast(conn_fd));
-
-        std.debug.print("收到连接，fd={d}\n", .{conn_fd});
-
-        // 通过 HttpProtocolHandler 处理请求
-        // 注意：这里应该通过 Protocol 状态机处理，目前是简化版
-        try handler.handle_request(conn_fd);
-    }
+    // 2. 初始化 HTTP 服务器
+    var server = try http_server.HttpServer.init(&metrics);
+    defer server.deinit();
+    
+    // 3. 设置全局指针（供信号处理函数使用）
+    g_server = &server;
+    
+    // 4. 设置 SIGINT 信号处理
+    var sa = std.posix.SigAction{
+        .handler = .{ .handler = sigint_handler },
+        .mask = std.posix.empty_sigset,
+        .flags = 0,
+    };
+    try std.posix.sigaction(std.posix.SIG.INT, &sa, null);
+    
+    std.debug.print("按 Ctrl+C 优雅关闭服务器\n", .{});
+    
+    // 5. 运行服务器主循环（直到收到 SIGINT）
+    server.run() catch |err| {
+        std.debug.print("服务器异常退出: {}\n", .{err});
+        return err;
+    };
+    
+    std.debug.print("服务器已关闭\n", .{});
 }

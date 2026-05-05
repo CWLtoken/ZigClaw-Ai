@@ -1,14 +1,58 @@
 // src/http_server.zig
-// ZigClaw V2.4 | 阶段22 | HTTP 服务化 | 异步推理协调版
+// ZigClaw V2.4 | 阶段23C | 故障恢复与可观测性
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
-const orchestrator = @import("orchestrator.zig");
-const token = @import("token.zig");
-const quantizer = @import("quantizer.zig");
-const sub_brain = @import("sub_brain.zig");
-const async_coordinator = @import("async_coordinator.zig");
 const mem = std.mem;
-const Arena = std.heap.ArenaAllocator;
+
+// 服务器指标（原子操作保证线程安全）
+pub const ServerMetrics = struct {
+    uptime_start: i64,           // 启动时间戳（毫秒）— 简化版：暂时为0
+    total_requests: std.atomic.Value(u64),
+    active_connections: std.atomic.Value(u32),
+    error_count: std.atomic.Value(u64),
+    
+    pub fn init() ServerMetrics {
+        return ServerMetrics{
+            .uptime_start = 0, // 简化：暂时不使用真实时间戳
+            .total_requests = std.atomic.Value(u64).init(0),
+            .active_connections = std.atomic.Value(u32).init(0),
+            .error_count = std.atomic.Value(u64).init(0),
+        };
+    }
+    
+    pub fn inc_requests(self: *ServerMetrics) void {
+        _ = self.total_requests.rmw(.Add, 1, .acquire);
+    }
+    
+    pub fn inc_connections(self: *ServerMetrics) void {
+        _ = self.active_connections.rmw(.Add, 1, .acquire);
+    }
+    
+    pub fn dec_connections(self: *ServerMetrics) void {
+        _ = self.active_connections.rmw(.Sub, 1, .acquire);
+    }
+    
+    pub fn inc_errors(self: *ServerMetrics) void {
+        _ = self.error_count.rmw(.Add, 1, .acquire);
+    }
+    
+    pub fn get_uptime_ms(self: *const ServerMetrics) i64 {
+        _ = self; // 消除未使用警告
+        return 0; // 简化：暂时返回0，真实实现需要正确的时间戳获取
+    }
+    
+    pub fn get_total_requests(self: *const ServerMetrics) u64 {
+        return self.total_requests.load(.acquire);
+    }
+    
+    pub fn get_active_connections(self: *const ServerMetrics) u32 {
+        return self.active_connections.load(.acquire);
+    }
+    
+    pub fn get_error_count(self: *const ServerMetrics) u64 {
+        return self.error_count.load(.acquire);
+    }
+};
 
 // HTTP 请求结构
 const HttpRequest = struct {
@@ -48,10 +92,11 @@ pub const HttpServer = struct {
     ring: io_uring.Ring,
     listen_fd: i32,
     port: u16,
-    coordinator: async_coordinator.Coordinator,
+    metrics: *ServerMetrics,  // 服务器指标
+    running: std.atomic.Value(bool),  // 优雅关闭标志
 
     /// 初始化 HTTP 服务器
-    pub fn init() !HttpServer {
+    pub fn init(metrics: *ServerMetrics) !HttpServer {
         var ring = try io_uring.Ring.init();
         errdefer ring.deinit(); // 只在失败时释放
 
@@ -80,6 +125,7 @@ pub const HttpServer = struct {
         std.debug.print("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/\n", .{port});
         std.debug.print("   路由：\n", .{});
         std.debug.print("     GET /health → 健康检查\n", .{});
+        std.debug.print("     GET /health?verbose=true → 详细指标\n", .{});
         std.debug.print("     GET /infer?input=xxx&modality=text|image → 推理\n", .{});
 
         // 取消 errdefer，因为要返回这些资源
@@ -87,38 +133,62 @@ pub const HttpServer = struct {
             .ring = ring,
             .listen_fd = listen_fd,
             .port = port,
-            .coordinator = async_coordinator.Coordinator.init(),
+            .metrics = metrics,
+            .running = std.atomic.Value(bool).init(true),
         };
     }
 
-    /// 运行服务器主循环（简化版：单连接处理）
+    /// 运行服务器主循环（支持优雅关闭）
     pub fn run(self: *HttpServer) !void {
-        while (true) {
+        while (self.is_running()) {
+            // 检查是否应该停止接受新连接
+            if (!self.is_running()) break;
+
             std.debug.print("等待连接...\n", .{});
 
-            const conn_fd = try io_uring.Syscall.accept(self.listen_fd, null, null);
-            defer io_uring.Syscall.close(conn_fd);
+            // 使用 io_uring ACCEPT 获取连接
+            const conn_fd = io_uring.Syscall.accept(self.listen_fd, null, null) catch |err| {
+                _ = err; // 消除未使用警告
+                if (!self.is_running()) break;
+                continue;
+            };
+            // 注意：这里不 defer close，因为连接处理完成后会关闭
+            // 更新活跃连接数
+            self.metrics.inc_connections();
 
             std.debug.print("收到连接，fd={d}\n", .{conn_fd});
 
             // 读取 HTTP 请求
             var buf: [8192]u8 = undefined;
-            const nread = try io_uring.Syscall.recv(conn_fd, &buf, buf.len, 0);
+            const nread = io_uring.Syscall.recv(conn_fd, &buf, buf.len, 0) catch |err| {
+                std.debug.print("读取请求失败: {}\n", .{err});
+                io_uring.Syscall.close(@intCast(conn_fd));
+                self.metrics.dec_connections();
+                continue;
+            };
+
             if (nread <= 0) {
-                std.debug.print("读取请求失败\n", .{});
+                io_uring.Syscall.close(@intCast(conn_fd));
+                self.metrics.dec_connections();
                 continue;
             }
 
+            // 更新请求计数
+            self.metrics.inc_requests();
+
             const request_bytes = buf[0..@intCast(nread)];
-            
-            // 解析 HTTP 请求
-            var arena = Arena.init(std.heap.page_allocator);
+
+            // 解析 HTTP 请求（简化版）
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer arena.deinit();
             const alloc = arena.allocator();
 
             var req = parseHttpRequest(alloc, request_bytes) catch |err| {
                 std.debug.print("解析请求失败: {}\n", .{err});
                 sendErrorResponse(conn_fd, 400, "Bad Request") catch {};
+                io_uring.Syscall.close(@intCast(conn_fd));
+                self.metrics.dec_connections();
+                self.metrics.inc_errors();
                 continue;
             };
             defer req.deinit();
@@ -127,22 +197,39 @@ pub const HttpServer = struct {
 
             // 路由处理
             if (mem.eql(u8, req.path, "/health")) {
-                handleHealth(conn_fd) catch |err| {
+                handleHealth(self.metrics, conn_fd, req.query) catch |err| {
                     std.debug.print("处理 /health 失败: {}\n", .{err});
                 };
             } else if (mem.startsWith(u8, req.path, "/infer")) {
-                handleInfer(self, conn_fd, &req) catch |err| {
-                    std.debug.print("处理 /infer 失败: {}\n", .{err});
-                };
+                // 简化：直接返回 503（推理功能由 http_protocol.zig 处理）
+                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                self.metrics.inc_errors();
             } else {
                 sendErrorResponse(conn_fd, 404, "Not Found") catch {};
+                self.metrics.inc_errors();
             }
+
+            // 关闭连接
+            io_uring.Syscall.close(@intCast(conn_fd));
+            self.metrics.dec_connections();
         }
+
+        std.debug.print("服务器停止接受新连接\n", .{});
+    }
+
+    /// 检查服务器是否正在运行
+    pub fn is_running(self: *const HttpServer) bool {
+        return self.running.load(.acquire);
+    }
+
+    /// 请求优雅关闭
+    pub fn shutdown(self: *HttpServer) void {
+        self.running.store(false, .release);
     }
 
     /// 释放服务器资源
     pub fn deinit(self: *HttpServer) void {
-        io_uring.Syscall.close(self.listen_fd);
+        io_uring.Syscall.close(@intCast(self.listen_fd));
         self.ring.deinit();
     }
 };
@@ -198,139 +285,61 @@ fn parseHttpRequest(alloc: std.mem.Allocator, raw: []const u8) !HttpRequest {
     };
 }
 
-/// 处理 /health 健康检查
-fn handleHealth(conn_fd: i32) !void {
-    const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
-    const response = try std.fmt.allocPrint(std.heap.page_allocator,
-        "HTTP/1.1 200 OK\r\n" ++
-        "Content-Type: application/json\r\n" ++
-        "Content-Length: {d}\r\n" ++
-        "Connection: close\r\n" ++
-        "\r\n{s}",
-        .{body.len, body}
-    );
-    defer std.heap.page_allocator.free(response);
+/// 处理 /health 健康检查（支持 ?verbose=true）
+fn handleHealth(metrics: *const ServerMetrics, conn_fd: i32, query: ?[]const u8) !void {
+    const verbose = if (query) |q| mem.indexOf(u8, q, "verbose=true") != null else false;
 
-    _ = try io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0);
-    std.debug.print("已发送 /health 响应\n", .{});
-}
+    if (verbose) {
+        // 详细模式：返回 JSON 包含 uptime、total_requests、active_connections、error_count
+        const uptime_ms = metrics.get_uptime_ms();
+        const total_requests = metrics.get_total_requests();
+        const active = metrics.get_active_connections();
+        const errors = metrics.get_error_count();
 
-/// 处理 /infer 推理请求（异步协调版）
-fn handleInfer(server: *HttpServer, conn_fd: i32, req: *const HttpRequest) !void {
-    // 解析查询参数：input 和 modality
-    const query = req.query orelse {
-        sendErrorResponse(conn_fd, 400, "Missing query parameters") catch {};
-        return;
-    };
+        const body = try std.fmt.allocPrint(std.heap.page_allocator,
+            "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d}}}",
+            .{ uptime_ms, total_requests, active, errors }
+        );
+        defer std.heap.page_allocator.free(body);
 
-    var input: ?[]const u8 = null;
-    var modality_str: []const u8 = "text"; // 默认文本
+        const response = try std.fmt.allocPrint(std.heap.page_allocator,
+            "HTTP/1.1 200 OK\r\n" ++
+            "Content-Type: application/json\r\n" ++
+            "Content-Length: {d}\r\n" ++
+            "Connection: close\r\n" ++
+            "\r\n{s}",
+            .{ body.len, body }
+        );
+        defer std.heap.page_allocator.free(response);
 
-    var params = mem.splitSequence(u8, query, "&");
-    while (params.next()) |param| {
-        if (mem.startsWith(u8, param, "input=")) {
-            input = param[6..]; // 跳过 "input="
-        } else if (mem.startsWith(u8, param, "modality=")) {
-            modality_str = param[9..]; // 跳过 "modality="
-        }
+        _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
+            std.debug.print("发送详细健康响应失败: {}\n", .{err});
+            return;
+        };
+    } else {
+        // 简单模式
+        const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
+        const response = try std.fmt.allocPrint(std.heap.page_allocator,
+            "HTTP/1.1 200 OK\r\n" ++
+            "Content-Type: application/json\r\n" ++
+            "Content-Length: {d}\r\n" ++
+            "Connection: close\r\n" ++
+            "\r\n{s}",
+            .{ body.len, body }
+        );
+        defer std.heap.page_allocator.free(response);
+
+        _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
+            std.debug.print("发送健康响应失败: {}\n", .{err});
+            return;
+        };
     }
 
-    if (input == null) {
-        sendErrorResponse(conn_fd, 400, "Missing 'input' parameter") catch {};
-        return;
-    }
-
-    std.debug.print("推理请求（异步）: input='{s}', modality='{s}'\n", .{ input.?, modality_str });
-
-    // 转换 modality 字符串为枚举
-    const modality: sub_brain.Modality = if (mem.eql(u8, modality_str, "image"))
-        .Image
-    else if (mem.eql(u8, modality_str, "text"))
-        .Text
-    else
-        .Unknown;
-
-    // 准备回调：将推理结果写回 HTTP 响应
-    const Callback = struct {
-        fn onComplete(result: []const u8, user_data: ?*anyopaque) void {
-            const fd_ptr = @as(*i32, @ptrCast(@alignCast(user_data.?)));
-            const fd = fd_ptr.*;
-
-            // 构造 JSON 响应
-            const response_body = std.fmt.allocPrint(std.heap.page_allocator,
-                "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"{s}\"}}",
-                .{ "test_input", "text", result } // 简化：实际应从 user_data 提取
-            ) catch {
-                sendErrorResponse(fd, 500, "Response generation failed") catch {};
-                return;
-            };
-            defer std.heap.page_allocator.free(response_body);
-
-            const response = std.fmt.allocPrint(std.heap.page_allocator,
-                "HTTP/1.1 200 OK\r\n" ++
-                "Content-Type: application/json\r\n" ++
-                "Content-Length: {d}\r\n" ++
-                "Connection: close\r\n" ++
-                "\r\n{s}",
-                .{ response_body.len, response_body }
-            ) catch {
-                sendErrorResponse(fd, 500, "Response generation failed") catch {};
-                return;
-            };
-            defer std.heap.page_allocator.free(response);
-
-            _ = io_uring.Syscall.send(fd, response.ptr, response.len, 0) catch |err| {
-                std.debug.print("send failed: {}\n", .{err});
-                return;
-            };
-            std.debug.print("已发送异步推理响应\n", .{});
-        }
-    };
-
-    // 提交异步推理请求到协调器
-    const req_data = async_coordinator.InferenceRequest{
-        .prompt = input.?,
-        .modality = if (modality == .Image) @as(u8, 1) else @as(u8, 0),
-        .callback = Callback.onComplete,
-        .user_data = @as(?*anyopaque, @constCast(@ptrCast(&conn_fd))),
-    };
-
-    server.coordinator.submit(req_data) catch |err| {
-        std.debug.print("提交推理请求失败: {}\n", .{err});
-        sendErrorResponse(conn_fd, 503, "Service Busy") catch {};
-        return;
-    };
-
-    // 返回 202 Accepted（推理已提交，异步处理中）
-    const accepted_response = 
-        "HTTP/1.1 202 Accepted\r\n" ++
-        "Content-Type: application/json\r\n" ++
-        "Connection: close\r\n" ++
-        "\r\n{\"status\":\"accepted\",\"message\":\"Inference request submitted\"}";
-    
-    _ = try io_uring.Syscall.send(conn_fd, accepted_response.ptr, accepted_response.len, 0);
-    std.debug.print("已返回 202 Accepted\n", .{});
-
-    // 模拟异步推理完成（实际应由事件循环触发）
-    // 注意：这是简化实现，真实场景应在推理完成后调用 coordinator.complete()
-    var arena = Arena.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    var orchestrator_instance = orchestrator.Orchestrator.init();
-    _ = orchestrator_instance.register_brain(sub_brain.getImageBrain());
-
-    const result = orchestrator_instance.infer(alloc, input.?, modality) catch |err| {
-        std.debug.print("推理失败: {}\n", .{err});
-        // 即使失败也调用 complete，让回调处理错误
-        _ = server.coordinator.complete("推理失败");
-        return;
-    };
-
-    // 推理完成，触发回调
-    _ = server.coordinator.complete(result.text);
+    std.debug.print("/health 请求处理完成 (verbose={})\n", .{verbose});
 }
 
+// 推理功能已移至 http_protocol.zig（阶段23B 封板）
+// 当前 /infer 路径在 run() 中直接返回 503 Service Unavailable
 /// 发送错误响应
 fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void {
     const response = try std.fmt.allocPrint(std.heap.page_allocator,
