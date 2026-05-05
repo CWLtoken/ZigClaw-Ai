@@ -1,14 +1,14 @@
 # ZigClaw-AI 🦅
 
-[![Build Status](https://img.shields.io/badge/tests-41%2F41%20passed-brightgreen)](https://github.com/CWLtoken/ZigClaw-AI)
+[![Build Status](https://img.shields.io/badge/tests-76%2F76%20passed-brightgreen)](https://github.com/CWLtoken/ZigClaw-AI)
 [![Zig Version](https://img.shields.io/badge/zig-0.16.0-blue)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![GitHub tag](https://img.shields.io/github/v/tag/CWLtoken/ZigClaw-AI?label=version)](https://github.com/CWLtoken/ZigClaw-AI/releases)
 
 **ZigClaw-AI** 是一个基于 **Zig 0.16** 标准库构建的高性能异步 AI 客服系统框架，采用 **io_uring** 底层、事件驱动架构和分层状态机设计。本项目严格遵守"零第三方库"军规，全部使用 Zig 0.16 标准库实现。
 
-> **当前状态：v2.4 已封板 (Phase 0-17 完成)**  
-> 最新标签：`v4.0-p30-orchestrator` | 测试状态：**41/41 全绿** ✅
+> **当前状态：v2.4 已封板 (Phase 0-23C 完成)**  
+> 最新标签：`v5.4-p41-observability` | 测试状态：**76/76 全绿** ✅
 
 ---
 
@@ -20,7 +20,7 @@
 | **🧠 智能编排层** | 多模态输入 → Token 序列 → 推理引擎，支持文本直通和向量量化 |
 | **📊 自适应内存管理** | 静态分配、epoch 回收、无堆分配（编排层） |
 | **🔒 军规驱动设计** | 无菌室原则、精确导入、无循环依赖 |
-| **🧪 测试全绿** | 41 个测试覆盖从 Ring 到编排层的全链路 |
+| **🧪 测试全绿** | 76 个测试覆盖从 Ring 到编排层的全链路 |
 
 ---
 

@@ -30,6 +30,9 @@ const p23 = @import("integration_p23.zig"); // P23: 1024轮压力测试
 const p24 = @import("integration_p24.zig");
 const p25 = @import("integration_p25.zig");
 const p26 = @import("integration_p26.zig");
+// P27: token.zig 内联测试（Token 结构、TokenSequence）
+// P28: quantizer.zig 内联测试（量化/反量化、余弦相似度）
+// P29: sub_brain.zig + orchestrator.zig 内联测试（子脑注册、模态分发）
 const p30 = @import("integration_p30.zig");
 const p31 = @import("integration_p31.zig"); // P31: infer_from_tokens 全链路验证
 const p32 = @import("integration_p32.zig"); // P32: 图像子脑（LCG 256维）全链路
