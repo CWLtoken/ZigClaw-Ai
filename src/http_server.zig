@@ -5,6 +5,7 @@ const io_uring = @import("io_uring.zig");
 const orchestrator = @import("orchestrator.zig");
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
+const sub_brain = @import("sub_brain.zig");
 const mem = std.mem;
 const Arena = std.heap.ArenaAllocator;
 
@@ -105,7 +106,7 @@ pub const HttpServer = struct {
                 continue;
             }
 
-            const request_bytes = buf[0..@intCast(usize, nread)];
+            const request_bytes = buf[0..@intCast(nread)];
             
             // 解析 HTTP 请求
             var arena = Arena.init(std.heap.page_allocator);
@@ -220,14 +221,14 @@ fn handleInfer(conn_fd: i32, req: *const HttpRequest) !void {
     };
 
     var input: ?[]const u8 = null;
-    var modality: []const u8 = "text"; // 默认文本
+    var modality_str: []const u8 = "text"; // 默认文本
 
     var params = mem.split(u8, query, "&");
     while (params.next()) |param| {
         if (mem.startsWith(u8, param, "input=")) {
             input = param[6..]; // 跳过 "input="
         } else if (mem.startsWith(u8, param, "modality=")) {
-            modality = param[9..]; // 跳过 "modality="
+            modality_str = param[9..]; // 跳过 "modality="
         }
     }
 
@@ -236,29 +237,48 @@ fn handleInfer(conn_fd: i32, req: *const HttpRequest) !void {
         return;
     }
 
-    std.debug.print("推理请求: input='{s}', modality='{s}'\n", .{input.?, modality});
+    std.debug.print("推理请求: input='{s}', modality='{s}'\n", .{ input.?, modality_str });
 
-    // 调用 Orchestrator 进行推理（简化：直接返回模拟结果）
-    // TODO: 真实对接 orchestrator.infer(...)
-    const result = try std.fmt.allocPrint(std.heap.page_allocator,
-        "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"zigclaw-infer-ok\"}}",
-        .{input.?, modality}
+    // 转换 modality 字符串为枚举
+    const modality: sub_brain.Modality = if (mem.eql(u8, modality_str, "image"))
+        .Image
+    else if (mem.eql(u8, modality_str, "text"))
+        .Text
+    else
+        .Unknown;
+
+    // 初始化 Orchestrator 并执行推理
+    var arena = Arena.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var orchestrator_instance = orchestrator.Orchestrator.init();
+    // 注册图像子脑（如果可用）
+    _ = orchestrator_instance.register_brain(sub_brain.getImageBrain());
+
+    const result = orchestrator_instance.infer(alloc, input.?, modality) catch |err| {
+        std.debug.print("推理失败: {}\n", .{err});
+        sendErrorResponse(conn_fd, 500, "Inference failed") catch {};
+        return;
+    };
+
+    // 构造 JSON 响应
+    const response_body = try std.fmt.allocPrint(alloc,
+        "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"{s}\"}}",
+        .{ input.?, modality_str, result.text }
     );
-    defer std.heap.page_allocator.free(result);
 
-    const response_body = result;
-    const response = try std.fmt.allocPrint(std.heap.page_allocator,
+    const response = try std.fmt.allocPrint(alloc,
         "HTTP/1.1 200 OK\r\n" ++
         "Content-Type: application/json\r\n" ++
         "Content-Length: {d}\r\n" ++
         "Connection: close\r\n" ++
         "\r\n{s}",
-        .{response_body.len, response_body}
+        .{ response_body.len, response_body }
     );
-    defer std.heap.page_allocator.free(response);
 
     _ = try io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0);
-    std.debug.print("已发送 /infer 响应\n", .{});
+    std.debug.print("已发送 /infer 推理响应\n", .{});
 }
 
 /// 发送错误响应

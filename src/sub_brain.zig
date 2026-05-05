@@ -2,10 +2,8 @@ const std = @import("std");
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
 
-// C FFI: 真实图像特征提取
-const c = @cImport({
-    @cInclude("image_feature.h");
-});
+// C FFI: 真实图像特征提取（使用 extern 声明，image_feature.c 会被链接）
+extern fn extract_image_features(path: [*]const u8, output: [*]f32) c_int;
 
 // 模态枚举
 pub const Modality = enum {
@@ -93,13 +91,15 @@ pub fn getImageBrain() SubBrain {
 fn imageExtractReal(input: []const u8, output: []f32) anyerror!void {
     if (output.len < 64) return error.BufferTooSmall;
 
-    // 将图像路径转为 C 字符串（null-terminated）
-    const path_c = try std.cstr.addNullByte(std.heap.page_allocator, input);
+    // 将图像路径转为 C 字符串（null-terminated）- Zig 0.16 兼容实现
+    const path_c = try std.heap.page_allocator.alloc(u8, input.len + 1);
     defer std.heap.page_allocator.free(path_c);
+    @memcpy(path_c[0..input.len], input);
+    path_c[input.len] = 0; // null 终止符
 
     // 调用 C 函数，获取 64 维特征
     var features: [64]f32 = undefined;
-    const rc = c.extract_image_features(path_c, &features);
+    const rc = extract_image_features(path_c.ptr, &features);
     if (rc != 0) return error.ImageFeatureFailed;
 
     // 复制到 output

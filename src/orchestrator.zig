@@ -2,6 +2,7 @@ const std = @import("std");
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
 const sub_brain = @import("sub_brain.zig");
+const inference = @import("inference.zig");
 
 pub const Orchestrator = struct {
     sub_brains: [MAX_BRAINS]sub_brain.SubBrain,
@@ -59,6 +60,18 @@ pub const Orchestrator = struct {
         var tok = token.Token.initVector(vector[0..brain.dim]);
         try self.quantizer.quantize(vector[0..brain.dim], &tok);
         try seq.append(tok);
+    }
+
+    // 推理桥接：orchestrate → infer_from_tokens → 返回结果
+    pub fn infer(self: *const Orchestrator, allocator: std.mem.Allocator, input: []const u8, modality: sub_brain.Modality) !inference.InferenceResult {
+        // 1. 编排生成 Token 序列
+        var seq = token.TokenSequence.init();
+        try self.orchestrate(input, modality, &seq);
+
+        // 2. 调用推理引擎
+        const max_tokens: u32 = 512;
+        const api_key: []const u8 = ""; // Ollama 本地推理不需要 Key
+        return inference.infer_from_tokens(allocator, &seq, max_tokens, api_key);
     }
 };
 
