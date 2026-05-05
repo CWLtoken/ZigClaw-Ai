@@ -116,7 +116,7 @@ pub const HttpServer = struct {
             defer arena.deinit();
             const alloc = arena.allocator();
 
-            const req = parseHttpRequest(alloc, request_bytes) catch |err| {
+            var req = parseHttpRequest(alloc, request_bytes) catch |err| {
                 std.debug.print("解析请求失败: {}\n", .{err});
                 sendErrorResponse(conn_fd, 400, "Bad Request") catch {};
                 continue;
@@ -155,7 +155,7 @@ fn parseHttpRequest(alloc: std.mem.Allocator, raw: []const u8) !HttpRequest {
     const first_line_end = mem.indexOf(u8, raw, "\r\n") orelse return error.InvalidRequest;
     const first_line = raw[0..first_line_end];
 
-    var iter = mem.split(u8, first_line, " ");
+    var iter = mem.splitSequence(u8, first_line, " ");
     const method = iter.next() orelse return error.InvalidRequest;
     const full_path = iter.next() orelse return error.InvalidRequest;
     _ = iter.next(); // 跳过 HTTP/1.1
@@ -226,7 +226,7 @@ fn handleInfer(server: *HttpServer, conn_fd: i32, req: *const HttpRequest) !void
     var input: ?[]const u8 = null;
     var modality_str: []const u8 = "text"; // 默认文本
 
-    var params = mem.split(u8, query, "&");
+    var params = mem.splitSequence(u8, query, "&");
     while (params.next()) |param| {
         if (mem.startsWith(u8, param, "input=")) {
             input = param[6..]; // 跳过 "input="
@@ -279,7 +279,10 @@ fn handleInfer(server: *HttpServer, conn_fd: i32, req: *const HttpRequest) !void
             };
             defer std.heap.page_allocator.free(response);
 
-            _ = io_uring.Syscall.send(fd, response.ptr, response.len, 0);
+            _ = io_uring.Syscall.send(fd, response.ptr, response.len, 0) catch |err| {
+                std.debug.print("send failed: {}\n", .{err});
+                return;
+            };
             std.debug.print("已发送异步推理响应\n", .{});
         }
     };
@@ -289,7 +292,7 @@ fn handleInfer(server: *HttpServer, conn_fd: i32, req: *const HttpRequest) !void
         .prompt = input.?,
         .modality = if (modality == .Image) @as(u8, 1) else @as(u8, 0),
         .callback = Callback.onComplete,
-        .user_data = @as(?*anyopaque, @ptrCast(&conn_fd)),
+        .user_data = @as(?*anyopaque, @constCast(@ptrCast(&conn_fd))),
     };
 
     server.coordinator.submit(req_data) catch |err| {
@@ -305,7 +308,7 @@ fn handleInfer(server: *HttpServer, conn_fd: i32, req: *const HttpRequest) !void
         "Connection: close\r\n" ++
         "\r\n{\"status\":\"accepted\",\"message\":\"Inference request submitted\"}";
     
-    _ = io_uring.Syscall.send(conn_fd, accepted_response.ptr, accepted_response.len, 0);
+    _ = try io_uring.Syscall.send(conn_fd, accepted_response.ptr, accepted_response.len, 0);
     std.debug.print("已返回 202 Accepted\n", .{});
 
     // 模拟异步推理完成（实际应由事件循环触发）
