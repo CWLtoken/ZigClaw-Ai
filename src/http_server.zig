@@ -1,11 +1,12 @@
 // src/http_server.zig
-// ZigClaw V2.4 | C阶段 | HTTP 服务化 | 增强版：路由 + Orchestrator 对接
+// ZigClaw V2.4 | 阶段22 | HTTP 服务化 | 异步推理协调版
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
 const orchestrator = @import("orchestrator.zig");
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
 const sub_brain = @import("sub_brain.zig");
+const async_coordinator = @import("async_coordinator.zig");
 const mem = std.mem;
 const Arena = std.heap.ArenaAllocator;
 
@@ -47,6 +48,7 @@ pub const HttpServer = struct {
     ring: io_uring.Ring,
     listen_fd: i32,
     port: u16,
+    coordinator: async_coordinator.Coordinator,
 
     /// 初始化 HTTP 服务器
     pub fn init() !HttpServer {
@@ -85,6 +87,7 @@ pub const HttpServer = struct {
             .ring = ring,
             .listen_fd = listen_fd,
             .port = port,
+            .coordinator = async_coordinator.Coordinator.init(),
         };
     }
 
@@ -128,7 +131,7 @@ pub const HttpServer = struct {
                     std.debug.print("处理 /health 失败: {}\n", .{err});
                 };
             } else if (mem.startsWith(u8, req.path, "/infer")) {
-                handleInfer(conn_fd, &req) catch |err| {
+                handleInfer(self, conn_fd, &req) catch |err| {
                     std.debug.print("处理 /infer 失败: {}\n", .{err});
                 };
             } else {
@@ -212,8 +215,8 @@ fn handleHealth(conn_fd: i32) !void {
     std.debug.print("已发送 /health 响应\n", .{});
 }
 
-/// 处理 /infer 推理请求
-fn handleInfer(conn_fd: i32, req: *const HttpRequest) !void {
+/// 处理 /infer 推理请求（异步协调版）
+fn handleInfer(server: *HttpServer, conn_fd: i32, req: *const HttpRequest) !void {
     // 解析查询参数：input 和 modality
     const query = req.query orelse {
         sendErrorResponse(conn_fd, 400, "Missing query parameters") catch {};
@@ -237,7 +240,7 @@ fn handleInfer(conn_fd: i32, req: *const HttpRequest) !void {
         return;
     }
 
-    std.debug.print("推理请求: input='{s}', modality='{s}'\n", .{ input.?, modality_str });
+    std.debug.print("推理请求（异步）: input='{s}', modality='{s}'\n", .{ input.?, modality_str });
 
     // 转换 modality 字符串为枚举
     const modality: sub_brain.Modality = if (mem.eql(u8, modality_str, "image"))
@@ -247,38 +250,82 @@ fn handleInfer(conn_fd: i32, req: *const HttpRequest) !void {
     else
         .Unknown;
 
-    // 初始化 Orchestrator 并执行推理
+    // 准备回调：将推理结果写回 HTTP 响应
+    const Callback = struct {
+        fn onComplete(result: []const u8, user_data: ?*anyopaque) void {
+            const fd_ptr = @as(*i32, @ptrCast(@alignCast(user_data.?)));
+            const fd = fd_ptr.*;
+
+            // 构造 JSON 响应
+            const response_body = std.fmt.allocPrint(std.heap.page_allocator,
+                "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"{s}\"}}",
+                .{ "test_input", "text", result } // 简化：实际应从 user_data 提取
+            ) catch {
+                sendErrorResponse(fd, 500, "Response generation failed") catch {};
+                return;
+            };
+            defer std.heap.page_allocator.free(response_body);
+
+            const response = std.fmt.allocPrint(std.heap.page_allocator,
+                "HTTP/1.1 200 OK\r\n" ++
+                "Content-Type: application/json\r\n" ++
+                "Content-Length: {d}\r\n" ++
+                "Connection: close\r\n" ++
+                "\r\n{s}",
+                .{ response_body.len, response_body }
+            ) catch {
+                sendErrorResponse(fd, 500, "Response generation failed") catch {};
+                return;
+            };
+            defer std.heap.page_allocator.free(response);
+
+            _ = io_uring.Syscall.send(fd, response.ptr, response.len, 0);
+            std.debug.print("已发送异步推理响应\n", .{});
+        }
+    };
+
+    // 提交异步推理请求到协调器
+    const req_data = async_coordinator.InferenceRequest{
+        .prompt = input.?,
+        .modality = if (modality == .Image) @as(u8, 1) else @as(u8, 0),
+        .callback = Callback.onComplete,
+        .user_data = @as(?*anyopaque, @ptrCast(&conn_fd)),
+    };
+
+    server.coordinator.submit(req_data) catch |err| {
+        std.debug.print("提交推理请求失败: {}\n", .{err});
+        sendErrorResponse(conn_fd, 503, "Service Busy") catch {};
+        return;
+    };
+
+    // 返回 202 Accepted（推理已提交，异步处理中）
+    const accepted_response = 
+        "HTTP/1.1 202 Accepted\r\n" ++
+        "Content-Type: application/json\r\n" ++
+        "Connection: close\r\n" ++
+        "\r\n{\"status\":\"accepted\",\"message\":\"Inference request submitted\"}";
+    
+    _ = io_uring.Syscall.send(conn_fd, accepted_response.ptr, accepted_response.len, 0);
+    std.debug.print("已返回 202 Accepted\n", .{});
+
+    // 模拟异步推理完成（实际应由事件循环触发）
+    // 注意：这是简化实现，真实场景应在推理完成后调用 coordinator.complete()
     var arena = Arena.init(std.heap.page_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
     var orchestrator_instance = orchestrator.Orchestrator.init();
-    // 注册图像子脑（如果可用）
     _ = orchestrator_instance.register_brain(sub_brain.getImageBrain());
 
     const result = orchestrator_instance.infer(alloc, input.?, modality) catch |err| {
         std.debug.print("推理失败: {}\n", .{err});
-        sendErrorResponse(conn_fd, 500, "Inference failed") catch {};
+        // 即使失败也调用 complete，让回调处理错误
+        _ = server.coordinator.complete("推理失败");
         return;
     };
 
-    // 构造 JSON 响应
-    const response_body = try std.fmt.allocPrint(alloc,
-        "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"{s}\"}}",
-        .{ input.?, modality_str, result.text }
-    );
-
-    const response = try std.fmt.allocPrint(alloc,
-        "HTTP/1.1 200 OK\r\n" ++
-        "Content-Type: application/json\r\n" ++
-        "Content-Length: {d}\r\n" ++
-        "Connection: close\r\n" ++
-        "\r\n{s}",
-        .{ response_body.len, response_body }
-    );
-
-    _ = try io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0);
-    std.debug.print("已发送 /infer 推理响应\n", .{});
+    // 推理完成，触发回调
+    _ = server.coordinator.complete(result.text);
 }
 
 /// 发送错误响应

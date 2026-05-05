@@ -37,10 +37,12 @@ const p33 = @import("integration_p33.zig");
 const p34 = @import("integration_p34.zig");
 const p35 = @import("integration_p35.zig");
 const p36 = @import("integration_p36.zig");
+const p37 = @import("integration_p37.zig");
 const tok = @import("token.zig");
 const quant = @import("quantizer.zig");
 const sb = @import("sub_brain.zig");
 const orch = @import("orchestrator.zig");
+const ac = @import("async_coordinator.zig");
 
 comptime {
     _ = p3;
@@ -74,8 +76,10 @@ comptime {
     _ = p34; // P34: 端到端推理验证（Ollama）
     _ = p35; // P35: HTTP 推理服务集成测试
     _ = p36; // P36: 多模态推理测试
+    _ = p37; // P37: 客服场景端到端闭环测试
     _ = tok;
     _ = quant;
     _ = sb;
     _ = orch;
+    _ = ac; // async_coordinator 测试
 }
