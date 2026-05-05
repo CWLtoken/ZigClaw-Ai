@@ -84,7 +84,7 @@ comptime {
 }
 
 pub const Ring = struct {
-    fd: i32,
+    fd: u32,
     sq_head: *u32,
     sq_tail: *u32,
     sq_ring_mask: u32,
@@ -120,7 +120,7 @@ pub const Ring = struct {
         };
 
         // === 阶段 1：创建 fd ===
-        const fd: i32 = try Syscall.setup(1024, &params);
+        const fd: u32 = try Syscall.setup(1024, &params);
         errdefer Syscall.close(fd);
 
         // === 尺寸计算 ===
@@ -214,7 +214,6 @@ pub const SyscallError = error{
     OpenFailed,
     SubmitFailed,
     RegisterFailed,
-    AcceptFailed,
 };
 pub const SetupParams = extern struct {
     sq_entries: u32,
@@ -235,7 +234,7 @@ pub const SetupParams = extern struct {
     },
 };
 pub const Syscall = struct {
-    pub fn setup(entries: u32, params: *SetupParams) SyscallError!i32 {
+    pub fn setup(entries: u32, params: *SetupParams) SyscallError!u32 {
         // 直接敲击 425 号门牌 (x86_64 io_uring_setup)，绕过标准库封装
         const rc = std_os.syscall3(
             .io_uring_setup,
@@ -244,18 +243,19 @@ pub const Syscall = struct {
             @as(usize, 0),
         );
         
-        const fd: i32 = @intCast(rc);
+        const rc_trunc: u32 = @truncate(rc);
+        const fd: i32 = @bitCast(rc_trunc);
         if (fd < 0) {
             return SyscallError.IoUringSetupFailed;
         }
-        return fd;
+        return rc_trunc;
     }
-    pub fn map_ring(fd: i32, offset: usize, size: usize) SyscallError!*anyopaque {
+    pub fn map_ring(fd: u32, offset: usize, size: usize) SyscallError!*anyopaque {
         // 强制预分配物理页，拒绝缺页中断
         // Linux x86_64 UAPI: MAP_SHARED=0x01, MAP_POPULATE=0x8000
         const flags: usize = 0x01 | 0x8000; // MAP_SHARED | MAP_POPULATE
         const prot: usize = 0x1 | 0x2; // PROT_READ | PROT_WRITE (Linux x86_64 UAPI)
-
+        
         // 使用 syscall6 绕过 std.os.mmap，直接映射
         const ptr = std_os.syscall6(
             .mmap,
@@ -271,14 +271,14 @@ pub const Syscall = struct {
         }
         return @ptrFromInt(ptr);
     }
-    pub fn enter(fd: i32, to_submit: u32, min_complete: u32, flags: u32) SyscallError!u32 {
-        // ZC-3-04: min_complete >0 时必须设置 IORING_ENTER_GET_EVENTS(0x01) 标志
+    pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) SyscallError!u32 {
+        // ZC-3-04: min_complete > 0 时必须设置 IORING_ENTER_GETEVENTS(0x01) 标志
         const actual_flags: u32 = if (min_complete > 0) flags | 0x01 else flags;
         // ZC-7-01: 必须用 syscall6 传第6个参数(sigmask size)，
         // 否则 r9 寄存器残留值会导致链式提交行为异常
         const rc = std_os.syscall6(
             .io_uring_enter,
-            @as(usize, @bitCast(@as(i64, fd))),
+            @as(usize, fd),
             @as(usize, to_submit),
             @as(usize, min_complete),
             @as(usize, actual_flags),
@@ -292,8 +292,8 @@ pub const Syscall = struct {
         return @intCast(rc);
     }
 
-    pub fn close(fd: i32) void {
-        _ = std_os.syscall1(.close, @as(usize, @bitCast(@as(i64, fd))));
+    pub fn close(fd: u32) void {
+        _ = std_os.syscall1(.close, @as(usize, fd));
     }
 
     /// 内部函数：取消映射，忽略错误（清理路径无法恢复）
@@ -417,8 +417,8 @@ pub const Syscall = struct {
     }
 
     /// recv(fd, buf, len, flags) - blocking recv (for test verification)
-    pub fn recv(fd: i32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = std_os.syscall4(.recvfrom, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(buf), len, @as(usize, flags));
+    pub fn recv(fd: u32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
+        const rc = std_os.syscall4(.recvfrom, @as(usize, fd), @intFromPtr(buf), len, @as(usize, flags));
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
@@ -430,10 +430,10 @@ pub const Syscall = struct {
 
     /// send(fd, buf, len, flags) — 纯 syscall 降维，不经过标准库
     /// 注意：sendto 系统调用需要 6 个参数，最后两个是 dest_addr=NULL, addrlen=0
-    pub fn send(fd: i32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
+    pub fn send(fd: u32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
         const rc = std_os.syscall6(
             .sendto,
-            @as(usize, @bitCast(@as(i64, fd))),
+            @as(usize, fd),
             @intFromPtr(buf),
             len,
             @as(usize, flags),
@@ -453,22 +453,17 @@ pub const Syscall = struct {
         return result;
     }
 
-    /// accept(fd, addr, addrlen) — 纯 syscall 降维
-    /// 使用 std.os.linux.syscalls.X64 枚举值 .accept
+    /// accept(fd, addr, addrlen) - 接受连接，返回新连接的 fd (i32)
+    /// 注意：返回 i32，负数表示错误
     pub fn accept(fd: i32, addr: ?*SockAddrIn, addrlen: ?*u32) SyscallError!i32 {
         const rc = std_os.syscall3(
             .accept,
-            @as(usize, @intCast(fd)),
-            @as(usize, @intFromPtr(addr)),
-            @as(usize, @intFromPtr(addrlen)),
+            @as(usize, @bitCast(@as(i64, fd))),
+            if (addr) |a| @intFromPtr(a) else 0,
+            if (addrlen) |al| @intFromPtr(al) else 0,
         );
-        if (rc > 0x7FFFFFFFFFFFFFFF) {
-            return SyscallError.AcceptFailed;
-        }
         const result: i32 = @intCast(rc);
-        if (result < 0) {
-            return SyscallError.AcceptFailed;
-        }
+        if (result < 0) return SyscallError.OpenFailed;
         return result;
     }
 };

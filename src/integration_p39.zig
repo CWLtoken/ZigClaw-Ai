@@ -26,7 +26,7 @@ test "P39: 多连接 HTTP 压力测试 - 模拟" {
     var i: usize = 0;
     while (i < num_connections) : (i += 1) {
         // 模拟每个连接的处理
-        _ = i;
+        // 实际会通过 Protocol 状态机处理
     }
     try std.testing.expect(true);
 }

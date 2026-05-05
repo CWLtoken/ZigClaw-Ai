@@ -12,13 +12,14 @@ pub fn main() !void {
     var ring = try io_uring.Ring.init();
     errdefer ring.deinit();
 
-    // 2. 创建监听 socket
-    const listen_fd = try io_uring.Syscall.socket(
+    // 2. 创建监听 socket (返回 i32)
+    const listen_fd: i32 = try io_uring.Syscall.socket(
         io_uring.AF_INET,
         io_uring.SOCK_STREAM,
         0,
     );
-    defer io_uring.Syscall.close(listen_fd);
+    // close 接收 u32，需要 @intCast 转换
+    defer io_uring.Syscall.close(@intCast(listen_fd));
 
     // 3. 设置 SO_REUSEADDR（简化：跳过，非必须）
     // const reuse: i32 = 1;
@@ -53,9 +54,10 @@ pub fn main() !void {
     while (true) {
         std.debug.print("等待连接...\n", .{});
 
-        // 使用 io_uring ACCEPT 获取连接
-        const conn_fd = try io_uring.Syscall.accept(listen_fd, null, null);
-        defer io_uring.Syscall.close(conn_fd);
+        // 使用 io_uring ACCEPT 获取连接 (返回 i32)
+        const conn_fd: i32 = try io_uring.Syscall.accept(listen_fd, null, null);
+        // close 接收 u32，需要 @intCast 转换
+        defer io_uring.Syscall.close(@intCast(conn_fd));
 
         std.debug.print("收到连接，fd={d}\n", .{conn_fd});
 
