@@ -2,6 +2,11 @@ const std = @import("std");
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
 
+// C FFI: 真实图像特征提取
+const c = @cImport({
+    @cInclude("image_feature.h");
+});
+
 // 模态枚举
 pub const Modality = enum {
     Text,
@@ -81,5 +86,33 @@ pub fn getImageBrain() SubBrain {
         .extract = imageExtractLcg, // 现在也使用LCG，但只填充前2维
         .input_modality = .Image,
         .dim = 2,
+    };
+}
+
+// 真实图像特征提取：调用 C 的 extract_image_features
+fn imageExtractReal(input: []const u8, output: []f32) anyerror!void {
+    if (output.len < 64) return error.BufferTooSmall;
+
+    // 将图像路径转为 C 字符串（null-terminated）
+    const path_c = try std.cstr.addNullByte(std.heap.page_allocator, input);
+    defer std.heap.page_allocator.free(path_c);
+
+    // 调用 C 函数，获取 64 维特征
+    var features: [64]f32 = undefined;
+    const rc = c.extract_image_features(path_c, &features);
+    if (rc != 0) return error.ImageFeatureFailed;
+
+    // 复制到 output
+    @memcpy(output[0..64], features[0..64]);
+    return;
+}
+
+// 获取真实图像子脑（stb_image，64 维）
+pub fn getImageBrainReal() SubBrain {
+    return SubBrain{
+        .name = "image_real_stb",
+        .extract = imageExtractReal,
+        .input_modality = .Image,
+        .dim = 64,
     };
 }

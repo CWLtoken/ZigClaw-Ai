@@ -94,6 +94,22 @@ pub const Ring = struct {
     cq_tail: *u32,
     cq_ring_mask: u32,      // 新增
     cqes: [*]CqEntry,       // 改动：?*anyopaque -> [*]CqEntry
+    // 内存映射信息（用于 deinit 释放）
+    sq_ring_ptr: usize,
+    sq_ring_size: usize,
+    cq_ring_ptr: usize,
+    cq_ring_size: usize,
+    sqes_ptr: usize,
+    sqes_size: usize,
+
+    /// 释放所有资源：munmap 三块映射 + close fd
+    pub fn deinit(self: *Ring) void {
+        Syscall.munmap(self.sq_ring_ptr, self.sq_ring_size);
+        Syscall.munmap(self.cq_ring_ptr, self.cq_ring_size);
+        Syscall.munmap(self.sqes_ptr, self.sqes_size);
+        Syscall.close(self.fd);
+    }
+
     pub fn init() SyscallError!Ring {
         var params = SetupParams{
             .sq_entries = 0, .cq_entries = 0, .flags = 0,
@@ -169,6 +185,13 @@ pub const Ring = struct {
             .cq_tail = cq_tail_ptr,
             .cq_ring_mask = cq_mask,
             .cqes = @as([*]CqEntry, @ptrCast(@alignCast(cq_base + params.cq_off.cqes))),
+            // 保存映射信息用于 deinit
+            .sq_ring_ptr = @intFromPtr(sq_ptr),
+            .sq_ring_size = sq_ring_size,
+            .cq_ring_ptr = @intFromPtr(cq_ptr),
+            .cq_ring_size = cq_ring_size,
+            .sqes_ptr = sqes_raw,
+            .sqes_size = sqes_size,
         };
     }
 };

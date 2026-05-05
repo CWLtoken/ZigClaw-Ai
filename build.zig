@@ -10,7 +10,9 @@ pub fn build(b: *std.Build) void {
         zig_exe,
         "test",
         "src/tests.zig",
+        "src/image_feature.c", // 添加 C 源文件
         "-ODebug",
+        "--library", "c",
     });
     test_step.dependOn(&test_cmd.step);
 }
