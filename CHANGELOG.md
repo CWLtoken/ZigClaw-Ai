@@ -1,5 +1,44 @@
 # ZigClaw v2.4 Changelog
 
+## [v5.4-p41-observability] - 2026-05-06
+
+### 阶段23C：故障恢复与可观测性 🩺
+
+#### 完成项
+- ✅ **ServerMetrics**：原子操作保证线程安全（`std.atomic.Value`）
+- ✅ **/health?verbose=true**：支持详细指标返回（uptime, total_requests, active_connections, error_count）
+- ✅ **SIGINT 信号处理**：优雅关闭（停止接受新连接，等待现有连接完成）
+- ✅ **P40**：可观测性测试（3个测试）
+- ✅ **P41**：故障注入与恢复测试（4个测试：错误计数、客户端断连、优雅关闭、推理故障503）
+- ✅ **文档化**：完成A方案（架构、踩坑、纠偏、阶段、部署手册）
+
+#### 测试基线
+- **76/76 全绿** 🎉（从69增长至76）
+- P40 (3个) + P41 (4个) = 7个新测试
+- 所有原子操作测试通过，故障注入场景覆盖完整
+
+#### 技术细节
+- ServerMetrics 使用 Zig 0.16+ 新语法：`.load()` / `.store()` / `.rmw()`
+- 优雅关闭通过原子布尔标志 `running` 实现，事件循环检查该标志
+- HTTP 服务器与底层解耦：仅依赖 `io_uring` 和 `std`（精确导入）
+- 架构师裁决：HTTP 和二进制协议是**并列关系**，不是替代关系
+
+#### 文档化成果（A方案）
+- `docs/architecture.md`：六层架构全景图、模块依赖拓扑、数据流向
+- `docs/pitfalls.md`：E1-E32 踩坑记录（含根因和永久法则）
+- `docs/corrections.md`：D1-D8 架构纠偏（错误方案 vs 正确方案对比）
+- `docs/phases.md`：阶段0-23演进时序、关键commit、测试基线
+- `docs/deployment.md`：部署手册（编译、运行、Ollama配置、可观测性）
+- 提交到 `docs` 分支并推送远程
+
+#### Git 信息
+- **Tag**: `v5.4-p41-observability`
+- **Commit**: `ceca9a6`
+- **分支**: `zigclaw-hermes` (agent)
+- **文档分支**: `docs` (已推送)
+
+---
+
 ## [v4.1-p33-keepalive] - 2026-05-04
 
 ### 阶段18封板 🏁
