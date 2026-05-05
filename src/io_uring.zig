@@ -214,6 +214,7 @@ pub const SyscallError = error{
     OpenFailed,
     SubmitFailed,
     RegisterFailed,
+    AcceptFailed,
 };
 pub const SetupParams = extern struct {
     sq_entries: u32,
@@ -449,6 +450,25 @@ pub const Syscall = struct {
         if (result < 0) {
             last_send_rc = @as(usize, @bitCast(@as(i64, result)));
             return SyscallError.OpenFailed;
+        }
+        return result;
+    }
+
+    /// accept(fd, addr, addrlen) — 纯 syscall 降维
+    /// Linux x86_64 系统调用号 43
+    pub fn accept(fd: i32, addr: ?*SockAddrIn, addrlen: ?*u32) SyscallError!i32 {
+        const rc = std_os.syscall3(
+            43, // Linux x86_64 accept syscall number
+            @as(usize, @intCast(fd)),
+            @as(usize, @intFromPtr(addr)),
+            @as(usize, @intFromPtr(addrlen)),
+        );
+        if (rc > 0x7FFFFFFFFFFFFFFF) {
+            return SyscallError.AcceptFailed;
+        }
+        const result: i32 = @intCast(rc);
+        if (result < 0) {
+            return SyscallError.AcceptFailed;
         }
         return result;
     }
