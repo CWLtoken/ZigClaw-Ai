@@ -271,14 +271,14 @@ pub const Syscall = struct {
         }
         return @ptrFromInt(ptr);
     }
-    pub fn enter(fd: u32, to_submit: u32, min_complete: u32, flags: u32) SyscallError!u32 {
-        // ZC-3-04: min_complete > 0 时必须设置 IORING_ENTER_GETEVENTS(0x01) 标志
+    pub fn enter(fd: i32, to_submit: u32, min_complete: u32, flags: u32) SyscallError!u32 {
+        // ZC-3-04: min_complete >0 时必须设置 IORING_ENTER_GET_EVENTS(0x01) 标志
         const actual_flags: u32 = if (min_complete > 0) flags | 0x01 else flags;
         // ZC-7-01: 必须用 syscall6 传第6个参数(sigmask size)，
         // 否则 r9 寄存器残留值会导致链式提交行为异常
         const rc = std_os.syscall6(
             .io_uring_enter,
-            @as(usize, fd),
+            @as(usize, @bitCast(@as(i64, fd))),
             @as(usize, to_submit),
             @as(usize, min_complete),
             @as(usize, actual_flags),
