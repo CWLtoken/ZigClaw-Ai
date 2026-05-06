@@ -64,6 +64,8 @@ const middleware = @import("entry/middleware.zig");
 const integration_p47 = @import("integration_p47.zig");
 // DRD-048：P0 收官（P48）— Metrics 基线
 const metrics = @import("metrics.zig");
+// P48 集成测试
+const integration_p48 = @import("integration_p48.zig");
 
 comptime {
     _ = p3;
@@ -120,4 +122,6 @@ comptime {
     _ = integration_p47;
     // DRD-048：P0 收官（P48）— Metrics 基线
     _ = metrics;
+    // P48 集成测试
+    _ = integration_p48;
 }

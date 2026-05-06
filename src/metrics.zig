@@ -39,6 +39,7 @@ pub fn formatMetrics(buf: []u8) usize {
     const infer = infer_total.load(.acquire);
     const active = active_connections.load(.acquire);
 
+    // 缓冲区 512 字节足够大（Prometheus 输出约 300 字节），不会失败
     const result = std.fmt.bufPrint(buf,
         \\# HELP zigclaw_http_requests_total Total HTTP requests
         \\# TYPE zigclaw_http_requests_total counter
@@ -53,10 +54,7 @@ pub fn formatMetrics(buf: []u8) usize {
         \\# TYPE zigclaw_active_connections gauge
         \\zigclaw_active_connections {d}
         \\
-    , .{ http, auth, infer, active }) catch |err| {
-        _ = err; // 消除未使用警告
-        return 0; // 缓冲区不足
-    };
+    , .{ http, auth, infer, active }) catch unreachable;
 
     return result.len;
 }
