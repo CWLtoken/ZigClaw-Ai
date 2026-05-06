@@ -5,6 +5,7 @@ const io_uring = @import("io_uring.zig");
 const mem = std.mem;
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
+const metrics_mod = @import("metrics.zig");
 
 // 服务器指标（原子操作保证线程安全）
 pub const ServerMetrics = struct {
@@ -201,15 +202,23 @@ pub const HttpServer = struct {
         var ctx = context.RequestContext.init(req.method, req.path);
         std.debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
 
+        // P48-2: 递增 HTTP 请求总数
+        metrics_mod.incrHttpRequests();
+
         // 路由处理
             if (mem.eql(u8, req.path, "/health")) {
                 handleHealth(self.metrics, conn_fd, req.query) catch |err| {
                     std.debug.print("处理 /health 失败: {}\n", .{err});
                 };
         } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
+            // P48-2: 递增推理请求计数
+            metrics_mod.incrInfer();
+            
             // POST /v1/infer 处理（鉴权+推理）
             const auth_header = if (req.headers.get("Authorization")) |val| val else null;
             if (!middleware.checkAuth(auth_header)) {
+                // P48-2: 递增鉴权失败计数
+                metrics_mod.incrAuthFailures();
                 sendErrorResponse(conn_fd, 401, "Unauthorized") catch {};
                 self.metrics.inc_errors();
             } else {
