@@ -3,10 +3,12 @@
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
 const mem = std.mem;
-const time = std.time;
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
+const c = @cImport({
+    @cInclude("time.h");
+});
 
 // 服务器指标（原子操作保证线程安全）
 pub const ServerMetrics = struct {
@@ -41,8 +43,8 @@ pub const ServerMetrics = struct {
     }
     
     pub fn get_uptime_ms(self: *const ServerMetrics) i64 {
-        _ = self; // 消除未使用警告
-        return 0; // 简化：暂时返回0，真实实现需要正确的时间戳获取
+        if (self.uptime_start == 0) return 0;
+        return getCurrentTimeMs() - self.uptime_start;
     }
     
     pub fn get_total_requests(self: *const ServerMetrics) u64 {
@@ -57,6 +59,17 @@ pub const ServerMetrics = struct {
         return self.error_count.load(.acquire);
     }
 };
+
+// 获取当前单调时间（毫秒）
+fn getCurrentTimeMs() i64 {
+    var ts: c.struct_timespec = undefined;
+    const rc = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
+    if (rc == 0) {
+        return @as(i64, @intCast(ts.tv_sec)) * 1000 +
+               @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
+    }
+    return 0;
+}
 
 // HTTP 请求结构
 const HttpRequest = struct {
@@ -215,8 +228,9 @@ pub const HttpServer = struct {
             // P48-2: 递增推理请求计数
             metrics_mod.incrInfer();
             
-            // 计算推理延迟（暂时使用固定值 100ms 用于测试直方图）
-            const latency_ms: f64 = 100.0;
+            // 计算推理延迟（使用单调时间差）
+            const now_ms = getCurrentTimeMs();
+            const latency_ms: f64 = @as(f64, @floatFromInt(now_ms - ctx.timestamp_ms));
             
             // POST /v1/infer 处理（鉴权+推理）
             const auth_header = if (req.headers.get("Authorization")) |val| val else null;
