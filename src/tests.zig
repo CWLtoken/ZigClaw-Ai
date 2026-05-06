@@ -68,6 +68,8 @@ const metrics = @import("metrics.zig");
 const integration_p48 = @import("integration_p48.zig");
 // P49 集成测试
 const integration_p49 = @import("integration_p49.zig");
+// P50 集成测试
+const integration_p50 = @import("integration_p50.zig");
 
 comptime {
     _ = p3;
@@ -128,4 +130,6 @@ comptime {
     _ = integration_p48;
     // P49 集成测试
     _ = integration_p49;
+    // P50 集成测试
+    _ = integration_p50;
 }
