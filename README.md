@@ -1,14 +1,13 @@
 # ZigClaw-AI 🦅
 
-[![Build Status](https://img.shields.io/badge/tests-76%2F76%20passed-brightgreen)](https://github.com/CWLtoken/ZigClaw-AI)
+[![Build Status](https://img.shields.io/badge/tests-86%2F86%20passed-brightgreen)](https://github.com/CWLtoken/ZigClaw-AI)
 [![Zig Version](https://img.shields.io/badge/zig-0.16.0-blue)](https://ziglang.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![GitHub tag](https://img.shields.io/github/v/tag/CWLtoken/ZigClaw-AI?label=version)](https://github.com/CWLtoken/ZigClaw-AI/releases)
 
 **ZigClaw-AI** 是一个基于 **Zig 0.16** 标准库构建的高性能异步 AI 客服系统框架，采用 **io_uring** 底层、事件驱动架构和分层状态机设计。本项目严格遵守"零第三方库"军规，全部使用 Zig 0.16 标准库实现。
 
-> **当前状态：v2.4 已封板 (Phase 0-23C 完成)**  
-> 最新标签：`v5.4-p41-observability` | 测试状态：**76/76 全绿** ✅
+> **当前状态：v5.6 五层架构对齐 (Phase 0-17 + P42-P46 完成)**  \n> 最新标签：`v5.6-docs-five-layer` | 测试状态：**86/86 全绿** ✅
 
 ---
 
@@ -20,45 +19,62 @@
 | **🧠 智能编排层** | 多模态输入 → Token 序列 → 推理引擎，支持文本直通和向量量化 |
 | **📊 自适应内存管理** | 静态分配、epoch 回收、无堆分配（编排层） |
 | **🔒 军规驱动设计** | 无菌室原则、精确导入、无循环依赖 |
-| **🧪 测试全绿** | 76 个测试覆盖从 Ring 到编排层的全链路 |
+| **🧪 测试全绿** | 86 个测试覆盖五层架构全链路 |
 
 ---
 
-## 🏗️ 技术架构（DRD-039 落地）
+## 🏗️ 技术架构（五层架构对齐 v5.6 + 入口与服务层）
 
-### 分层架构
+### 五层架构 + 入口与服务层
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                 业务接入层                        │
-│  Router (router.zig) + HandlerFn/AsyncHandlerFn │
+│        入口与服务层 (Entry & Service Layer)          │
+│  main.zig + server.zig + http_server.zig         │
+│  + inference_client.zig                          │
+│  • HTTP 服务（路由分发、健康检查）                │
+│  • 推理客户端（OpenRouter/Ollama 接入）          │
+│  • 主入口（初始化、优雅关闭）                    │
 └───────────────────────┬─────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────┐
-│              编排层 (Phase 17)                   │
-│  Orchestrator → SubBrain → Quantizer → Token    │
-│  • 文本直通（零量化开销）                        │
-│  • 向量量化（余弦相似度 ≥ 0.92）               │
+│          编排层 (Orchestration Layer)               │
+│  orchestrator.zig + token.zig + quantizer.zig     │
+│  + sub_brain.zig + inference.zig                  │
+│  • 多模态输入 → Token 序列 → 推理引擎            │
+│  • 文本直通（零量化开销）                         │
+│  • 向量量化（余弦相似度 ≥ 0.92）                │
 └───────────────────────┬─────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────┐
-│              推理引擎层 (Phase 11-16)             │
-│  Inference (inference.zig) + OpenRouter (WIP)   │
+│           路由层 (Router Layer)  [P44-P45]       │
+│  router.zig + vector_index.zig + route_table.zig│
+│  • 向量索引：256-dim 余弦相似度搜索             │
+│  • 路由表：op_code → HandlerFn 映射 (256槽)     │
 └───────────────────────┬─────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────┐
-│           协议层 (Phase 5-7, 16-17)             │
-│  Protocol (protocol.zig) 5 状态机              │
+│          执行层 (Execution Layer)                │
+│  protocol.zig + reactor.zig + io_uring.zig      │
+│  • 协议状态机（5状态）                          │
+│  • Reactor 盲盒层（prepare_recv/send）          │
+│  • io_uring 泥泞层（Ring 真实化）              │
 └───────────────────────┬─────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────┐
-│          Reactor 盲盒层 (Phase 13-15)            │
-│  prepare_recv/send + submit/submit_timeout      │
+│          存储层 (Storage Layer)  [P42-P43]       │
+│  storage.zig + epoch.zig + heat_pool.zig       │
+│  + ssd_persist.zig                             │
+│  • StreamWindow 存储 + Epoch 回收              │
+│  • HeatPool 热度池（动态分段指数衰减）          │
+│  • SSD 持久化（双版本页原子切换）              │
 └───────────────────────┬─────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────┐
-│        io_uring 泥泞层 (Phase 3-12)              │
-│  Ring 真实化 + CQE 翻转 + 批量操作 + 错误恢复   │
+│       观测层 (Observability Layer)  [P46]        │
+│  ibus.zig                                      │
+│  • ModelFeedback 指标收集                       │
+│  • 读写 metrics.json（无堆分配）               │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -99,14 +115,54 @@ const SubBrain = struct {
 - **编排主逻辑**：选择子脑 → 提取 → 量化 → 输出 Token 序列
 - **模态支持**：文本（直通）、图像（模拟）、音频（预留）
 
+#### 5. **热度池** (`heat_pool.zig`) [NEW P42]
+- **功能**：动态分段指数衰减（快速衰减 + 慢速衰减）
+- **容量**：64 个槽位，静态分配
+- **测试**：3 个测试（更新、衰减、边界）
+
+#### 6. **SSD 持久化** (`ssd_persist.zig`) [NEW P43]
+- **功能**：HeatPool → SSD 双版本页原子切换
+- **安全**：write(ver=0) → rename → write(ver=1)，防崩溃
+- **测试**：1 个测试（flush + load 往返）
+
+#### 7. **向量索引** (`vector_index.zig`) [NEW P44]
+- **功能**：256-dim 向量余弦相似度搜索
+- **容量**：64 个向量，暴力搜索
+- **测试**：2 个测试（添加向量、搜索 top-k）
+
+#### 8. **路由表** (`route_table.zig`) [NEW P45]
+- **功能**：op_code (u8) → HandlerFn 映射
+- **容量**：256 槽位（覆盖所有 u8 值）
+- **测试**：2 个测试（注册、查找）
+
+#### 9. **I-Bus 观测** (`ibus.zig`) [NEW P46]
+- **功能**：ModelFeedback 指标收集（延迟、Token 数、成功率）
+- **存储**：JSON 格式写入 `metrics.json`，无堆分配
+- **测试**：2 个测试（写入、读取）
+
+#### 10. **入口与服务层** (`main.zig` + `server.zig` + `http_server.zig`) [NEW]
+- **功能**：HTTP 服务、推理客户端、主入口
+- **职责**：
+  - `main.zig`：程序入口，初始化各层，优雅关闭
+  - `server.zig`：TCP 脚手架（不导入 Protocol/Reactor，不持有 Storage 指针）
+  - `http_server.zig`：HTTP 路由分发、健康检查、推理接口
+  - `inference_client.zig`：OpenRouter/Ollama 推理接入
+- **依赖规则**：可导入五层核心引擎的公开接口，禁止导入内部实现
+- **测试**：集成测试 P40-P41（HTTP 服务、错误处理）
+
 ---
 
 ## 🧪 测试体系
 
 ### 测试统计
-- **总计**：41 个测试全绿 ✅
-- **阶段覆盖**：P3-P30（含 P28 LCG 修复）
-- **测试类型**：单元测试、集成测试、压力测试、量化精度验证
+- **总计**：**86/86** 测试全绿 ✅
+- **原有**：76 个测试（Phase 3-41）
+- **新增**：10 个测试（P42-P46）
+  - P42: 3 tests（HeatPool）
+  - P43: 1 test（SSDPersist）
+  - P44: 2 tests（VectorIndex）
+  - P45: 2 tests（RouteTable）
+  - P46: 2 tests（IBus）
 
 ### 关键测试
 | 测试 | 验证点 | 状态 |
@@ -115,6 +171,10 @@ const SubBrain = struct {
 | `quantizer.test.1000组随机向量` | 余弦相似度 ≥ 0.92 | ✅ |
 | `orchestrator.test.文本直通` | 零量化开销 | ✅ |
 | `integration_p30.test.全链路验证` | 输入→编排→推理→输出 | ✅ |
+| `heat_pool.test.更新热度` | 动态分段指数衰减 | ✅ |
+| `vector_index.test.搜索top-k` | 256-dim 余弦相似度 | ✅ |
+| `route_table.test.查找处理器` | op_code → HandlerFn | ✅ |
+| `ibus.test.写入指标` | ModelFeedback JSON | ✅ |
 
 ---
 
@@ -144,20 +204,28 @@ zig build
 ### 项目结构
 ```
 src/
-├── core/               # 核心系统
+├── core/               # 核心系统（执行层）
 │   ├── ring.zig       # io_uring Ring 封装
-│   ├── reactor.zig    # 事件驱动 Reactor
-│   └── protocol.zig  # 协议状态机
-├── memory/            # 内存系统
+│   ├── reactor.zig    # 事件驱动 Reactor（执行层）
+│   └── protocol.zig  # 协议状态机（执行层）
+├── memory/            # 内存系统（存储层）
 │   ├── storage.zig   # StreamWindow 存储
-│   └── epoch.zig     # Epoch 回收
-├── ai/                # AI 相关
+│   ├── epoch.zig     # Epoch 回收
+│   ├── heat_pool.zig # 热度池 [NEW P42]
+│   └── ssd_persist.zig # SSD 持久化 [NEW P43]
+├── ai/                # AI 相关（编排层）
 │   ├── inference.zig  # 推理引擎（模拟实现）
 │   ├── orchestrator.zig # 编排层（Phase 17）
 │   ├── token.zig     # Token 定义
 │   ├── quantizer.zig # 量化器
 │   └── sub_brain.zig # 子脑接口
-└── tests.zig         # 统一测试入口
+├── router/            # 路由层 [NEW P44-P45]
+│   ├── router.zig    # HTTP 路由
+│   ├── vector_index.zig # 向量索引（256-dim）
+│   └── route_table.zig  # 路由表（256槽）
+├── observability/     # 观测层 [NEW P46]
+│   └── ibus.zig      # I-Bus（ModelFeedback）
+└── tests.zig         # 统一测试入口（86个测试）
 ```
 
 ---
@@ -193,19 +261,26 @@ const std = @import("std");
 
 ## 📈 演进路线
 
-### 已完成（v2.4 封板）
+### 已完成（v5.6 五层架构对齐）
 - ✅ Phase 0-2：基础设施 + Ring 真实化
 - ✅ Phase 3-12：io_uring 泥泞层（批量/链式/错误恢复）
 - ✅ Phase 13-15：Reactor 盲盒层 + 双向引擎
 - ✅ Phase 16-17：协议层 + 推理框架 + **编排层向量化**
+- ✅ **P42-P46：五层架构对齐（存储层+路由层+观测层）**
+  - P42: HeatPool 热度池（3 tests）
+  - P43: SSD 持久化（1 test）
+  - P44: VectorIndex 向量索引（2 tests）
+  - P45: RouteTable 路由表（2 tests）
+  - P46: IBus 观测层（2 tests）
+  - **测试基线**：76 → **86/86** 全绿 ✅
 
 ### 后续计划（Phase 18+）
-| 任务 | 阻塞因素 | 预计解封 |
-|------|----------|----------|
-| `infer_from_tokens` 接口 | 无（阶段 18 任务） | 随时可做 |
-| 真实图像/音频子脑 | 特征提取算法 | 阶段 18+ |
-| TLS/HTTPS 推理接入 | Zig 0.17 `std.crypto.tls` 稳定 | Zig 0.17 |
-| Keep-Alive 连接复用 | 无阻塞 | 随时可做 |
+| 任务 | 所属层 | 阻塞因素 | 预计解封 |
+|------|--------|----------|----------|
+| `infer_from_tokens` 接口 | 编排层 | 无（阶段 18 任务） | 随时可做 |
+| 真实图像/音频子脑 | 编排层 | 特征提取算法 | 阶段 18+ |
+| TLS/HTTPS 推理接入 | 执行层 | Zig 0.17 `std.crypto.tls` 稳定 | Zig 0.17 |
+| Keep-Alive 连接复用 | 执行层 | 无阻塞 | 随时可做 |
 
 ---
 
@@ -213,7 +288,7 @@ const std = @import("std");
 
 ### 开发流程
 1. **遵循军规**：严格遵守无菌室、精确导入、零第三方库原则
-2. **测试驱动**：新功能必须附带测试，保持 41+/41 全绿
+2. **测试驱动**：新功能必须附带测试，保持 86+/86 全绿
 3. **分层设计**：新增模块明确层级，避免循环依赖
 4. **文档同步**：更新 CHANGELOG.md 和对应文档
 

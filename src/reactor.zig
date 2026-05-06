@@ -1,4 +1,5 @@
 // src/reactor.zig
+// 执行层 | Layer: Execution
 // ZigClaw V2.4 Phase5 | SPSC hardware isolation | buf_ptr blood pointer | Zig 0.16 typeInfo guard
 const io_uring = @import("io_uring.zig");
 

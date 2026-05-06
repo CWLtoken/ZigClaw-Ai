@@ -478,3 +478,17 @@ pub const SockAddrIn = extern struct {
     addr: u32 = 0,
     zero: [8]u8 = .{0} ** 8,
 };
+
+/// write(fd, buf, len) - 文件写入，返回写入字节数
+pub fn write(fd: i32, buf: [*]const u8, len: usize) SyscallError!usize {
+    const rc = std_os.syscall3(.write, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
+    if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    return rc;
+}
+
+/// read(fd, buf, len) - 文件读取，返回读取字节数
+pub fn read(fd: i32, buf: [*]u8, len: usize) SyscallError!usize {
+    const rc = std_os.syscall3(.read, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
+    if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    return rc;
+}
