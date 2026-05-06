@@ -67,7 +67,8 @@ pub const VectorIndex = struct {
             norm_a += a[i] * a[i];
             norm_b += b[i] * b[i];
         }
-        const denom = @sqrt(norm_a * norm_b);
+        const denom_f64: f64 = @sqrt(@as(f64, @floatCast(norm_a * norm_b)));
+        const denom: f32 = @floatCast(denom_f64);
         if (denom == 0) return 0;
         return dot / denom;
     }

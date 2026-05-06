@@ -1,11 +1,21 @@
-# ZigClaw-AI 架构文档（五层架构对齐 v5.6）
+# ZigClaw-AI 架构文档（五层架构对齐 v5.8）
 
 > 基于架构师 **DRD-039** 五层架构设计，完成 P42-P46 模块对齐。
+> **v5.8 更新**：数学精度修正（f32→f64 显式转换）+ 入口与服务层文档补全。
 
-## 🏛 五层架构概览
+## 🏛 架构概览（含入口与服务层）
 
 ```
 ┌─────────────────────────────────────────────────────┐
+│        入口与服务层 (Entry & Service Layer)          │
+│  main.zig + server.zig + http_server.zig         │
+│  + inference_client.zig                          │
+│  • HTTP 服务（路由分发、健康检查）                │
+│  • 推理客户端（OpenRouter/Ollama 接入）          │
+│  • 主入口（初始化、优雅关闭）                    │
+└───────────────────────┬─────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────┐
 │          编排层 (Orchestration Layer)               │
 │  orchestrator.zig + token.zig + quantizer.zig     │
 │  + sub_brain.zig + inference.zig                  │
@@ -45,6 +55,30 @@
 │  • 读写 metrics.json（无堆分配）               │
 └─────────────────────────────────────────────────┘
 ```
+
+## 🚪 入口与服务层（Entry & Service Layer）
+
+### 定义与职责
+入口与服务层是系统的**对外接口层**，负责接收外部请求、路由分发、调用核心引擎，不属于五层核心引擎。
+
+| 模块 | 路径 | 职责 | 测试 |
+|------|------|------|------|
+| Main | `src/main.zig` | 程序入口，初始化各层，优雅关闭 | 集成测试 |
+| Server | `src/server.zig` | TCP 脚手架，不导入 Protocol/Reactor，不持有 Storage 指针 | P5-P7 |
+| HTTP Server | `src/http_server.zig` | HTTP 路由分发、健康检查、推理接口 | P40-P41 |
+| Inference Client | `src/inference_client.zig` | OpenRouter/Ollama 推理接入 | P11-P16 |
+
+### 依赖规则（军规）
+✅ **允许**：导入五层核心引擎的**公开接口**（如 `router.HandlerFn`、`orchestrator.Orchestrator`）
+❌ **禁止**：导入五层核心引擎的**内部实现**（如 `reactor.zig`、`protocol.zig` 的内部结构）
+
+### 与五层核心引擎的关系
+- **入口层 → 编排层**：调用 `orchestrator.process()` 进行推理
+- **入口层 → 路由层**：使用 `router.HandlerFn` 注册 HTTP 路由
+- **入口层 → 执行层**：通过 `protocol.zig` 的公开 API 间接通信（不直接访问内部）
+- **入口层 → 存储层/观测层**：独立，不直接依赖
+
+---
 
 ## 📋 层间依赖规则（军规）
 

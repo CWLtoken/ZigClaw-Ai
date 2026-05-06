@@ -23,12 +23,21 @@
 
 ---
 
-## 🏗️ 技术架构（五层架构对齐 v5.6）
+## 🏗️ 技术架构（五层架构对齐 v5.6 + 入口与服务层）
 
-### 五层架构
+### 五层架构 + 入口与服务层
 
 ```
 ┌─────────────────────────────────────────────────────┐
+│        入口与服务层 (Entry & Service Layer)          │
+│  main.zig + server.zig + http_server.zig         │
+│  + inference_client.zig                          │
+│  • HTTP 服务（路由分发、健康检查）                │
+│  • 推理客户端（OpenRouter/Ollama 接入）          │
+│  • 主入口（初始化、优雅关闭）                    │
+└───────────────────────┬─────────────────────────┘
+                        │
+┌───────────────────────▼─────────────────────────┐
 │          编排层 (Orchestration Layer)               │
 │  orchestrator.zig + token.zig + quantizer.zig     │
 │  + sub_brain.zig + inference.zig                  │
@@ -130,6 +139,16 @@ const SubBrain = struct {
 - **功能**：ModelFeedback 指标收集（延迟、Token 数、成功率）
 - **存储**：JSON 格式写入 `metrics.json`，无堆分配
 - **测试**：2 个测试（写入、读取）
+
+#### 10. **入口与服务层** (`main.zig` + `server.zig` + `http_server.zig`) [NEW]
+- **功能**：HTTP 服务、推理客户端、主入口
+- **职责**：
+  - `main.zig`：程序入口，初始化各层，优雅关闭
+  - `server.zig`：TCP 脚手架（不导入 Protocol/Reactor，不持有 Storage 指针）
+  - `http_server.zig`：HTTP 路由分发、健康检查、推理接口
+  - `inference_client.zig`：OpenRouter/Ollama 推理接入
+- **依赖规则**：可导入五层核心引擎的公开接口，禁止导入内部实现
+- **测试**：集成测试 P40-P41（HTTP 服务、错误处理）
 
 ---
 

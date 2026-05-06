@@ -22,10 +22,15 @@ pub const HeatPool = struct {
             if (heat == 0) {
                 heat = 100.0;
             } else {
-                heat += @log(heat + 1.5) * 0.75;
+                // 修正：显式转换到 f64 保证精度（Zig 0.16 @log 接受 f64）
+                const heat_f64: f64 = @floatCast(heat);
+                const updated: f64 = heat_f64 + @log(heat_f64 + 1.5) * 0.75;
+                heat = @floatCast(updated);
             }
         } else {
-            const dyn_decay = 0.00035 + (0.012 / (heat + 2.0));
+            // 修正：显式转换到 f64 保证精度
+            const heat_f64_decay: f64 = @floatCast(heat);
+            const dyn_decay: f32 = @floatCast(0.00035 + (0.012 / (heat_f64_decay + 2.0)));
             heat *= (1.0 - dyn_decay);
         }
         if (heat > 65535.0) heat = 65535.0;
