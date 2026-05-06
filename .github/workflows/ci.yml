@@ -14,11 +14,30 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Install Zig 0.16
-      uses: mlugg/setup-zig@v1
+    - name: Cache Zig 0.16.0
+      id: cache-zig
+      uses: actions/cache@v4
       with:
-        version: 0.16.0
+        path: ~/.zig
+        key: zig-0.16.0-${{ runner.os }}
+
+    - name: Install Zig 0.16.0 (from GitHub Releases)
+      if: steps.cache-zig.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/.zig
+        cd ~/.zig
+        wget -q https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz
+        tar xf zig-linux-x86_64-0.16.0.tar.xz
+        mv zig-linux-x86_64-0.16.0/* .
+        rm -rf zig-linux-x86_64-0.16.0 zig-linux-x86_64-0.16.0.tar.xz
+        echo "Zig installed to ~/.zig"
+
+    - name: Add Zig to PATH
+      run: echo "$HOME/.zig" >> $GITHUB_PATH
         
+    - name: Verify Zig installation
+      run: zig version
+       
     - name: Run full test suite
       run: zig test src/tests.zig 2>&1 | tail -50
       
