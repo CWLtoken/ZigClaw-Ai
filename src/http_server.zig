@@ -3,6 +3,8 @@
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
 const mem = std.mem;
+const context = @import("context.zig");
+const middleware = @import("entry/middleware.zig");
 
 // 服务器指标（原子操作保证线程安全）
 pub const ServerMetrics = struct {
@@ -193,18 +195,40 @@ pub const HttpServer = struct {
             };
             defer req.deinit();
 
-            std.debug.print("请求: {s} {s}\n", .{req.method, req.path});
+        std.debug.print("请求: {s} {s}\n", .{req.method, req.path});
 
-            // 路由处理
+        // 生成请求上下文（原子ID，零分配）
+        var ctx = context.RequestContext.init(req.method, req.path);
+        std.debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
+
+        // 路由处理
             if (mem.eql(u8, req.path, "/health")) {
                 handleHealth(self.metrics, conn_fd, req.query) catch |err| {
                     std.debug.print("处理 /health 失败: {}\n", .{err});
                 };
-            } else if (mem.startsWith(u8, req.path, "/infer")) {
-                // 简化：直接返回 503（推理功能由 http_protocol.zig 处理）
-                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+        } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
+            // POST /v1/infer 处理（鉴权+推理）
+            const auth_header = if (req.headers.get("Authorization")) |val| val else null;
+            if (!middleware.checkAuth(auth_header)) {
+                sendErrorResponse(conn_fd, 401, "Unauthorized") catch {};
                 self.metrics.inc_errors();
             } else {
+                // 鉴权成功，暂返回 503（后续接入真实推理）
+                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                self.metrics.inc_errors();
+            }
+        } else if (mem.eql(u8, req.path, "/metrics")) {
+            // /metrics 占位（返回简单状态）
+            const response = std.fmt.allocPrint(std.heap.page_allocator,
+                "HTTP/1.1 200 OK\r\n" ++
+                "Content-Type: application/json\r\n" ++
+                "Connection: close\r\n" ++
+                "\r\n{\"status\":\"ok\"}") catch unreachable;
+            defer std.heap.page_allocator.free(response);
+            _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
+                std.debug.print("发送/metrics响应失败: {}\n", .{err});
+            };
+        } else {
                 sendErrorResponse(conn_fd, 404, "Not Found") catch {};
                 self.metrics.inc_errors();
             }
