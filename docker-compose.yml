@@ -1,0 +1,72 @@
+version: "3.8"
+
+services:
+  # ZigClaw 主服务
+  zigclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zigclaw
+    restart: unless-stopped
+    ports:
+      - "${ZIGCLAW_PORT:-8080}:8080"
+      - "${METRICS_PORT:-9090}:9090"
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - API_KEY=${API_KEY:-changeme-in-production}
+      - METRICS_PORT=${METRICS_PORT:-9090}
+      - PORT=${ZIGCLAW_PORT:-8080}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - zigclaw-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Ollama 推理引擎
+  ollama:
+    image: ollama/ollama:0.1.26
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    networks:
+      - zigclaw-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:11434/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # Nginx 反向代理 + TLS 终止
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: zigclaw-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - zigclaw
+    networks:
+      - zigclaw-net
+
+networks:
+  zigclaw-net:
+    driver: bridge
+
+volumes:
+  ollama-data:
