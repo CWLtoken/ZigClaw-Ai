@@ -61,6 +61,7 @@ const ib = @import("ibus.zig");
 const ctx = @import("context.zig");
 const json_ext = @import("entry/json_extractor.zig");
 const middleware = @import("entry/middleware.zig");
+const integration_p47 = @import("integration_p47.zig");
 
 comptime {
     _ = p3;
@@ -114,4 +115,5 @@ comptime {
     _ = ctx;
     _ = json_ext;
     _ = middleware;
+    _ = integration_p47;
 }
