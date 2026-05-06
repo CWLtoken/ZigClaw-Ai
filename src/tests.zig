@@ -59,6 +59,7 @@ const rt = @import("route_table.zig");
 const ib = @import("ibus.zig");
 // 阶段24：入口层加固（P47）
 const ctx = @import("context.zig");
+const json_ext = @import("entry/json_extractor.zig");
 
 comptime {
     _ = p3;
@@ -110,4 +111,5 @@ comptime {
     _ = ib;
     // 阶段24：入口层加固（P47）
     _ = ctx;
+    _ = json_ext;
 }
