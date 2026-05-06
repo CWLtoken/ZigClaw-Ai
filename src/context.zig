@@ -24,7 +24,7 @@ pub const RequestContext = struct {
         const id = old_id + 1;
         return .{
             .id = id,
-            .timestamp_ms = 0, // TODO: implement real timestamp for Zig 0.16
+            .timestamp_ms = 0, // 暂时占位，后续修复 Zig 0.16 时间戳获取
             .method = method,
             .path = path,
             .auth_token_hash = null,

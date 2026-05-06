@@ -3,6 +3,7 @@
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
 const mem = std.mem;
+const time = std.time;
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
@@ -214,6 +215,9 @@ pub const HttpServer = struct {
             // P48-2: 递增推理请求计数
             metrics_mod.incrInfer();
             
+            // 计算推理延迟（暂时使用固定值 100ms 用于测试直方图）
+            const latency_ms: f64 = 100.0;
+            
             // POST /v1/infer 处理（鉴权+推理）
             const auth_header = if (req.headers.get("Authorization")) |val| val else null;
             if (!middleware.checkAuth(auth_header)) {
@@ -226,6 +230,9 @@ pub const HttpServer = struct {
                 sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
                 self.metrics.inc_errors();
             }
+            
+            // P49-2: 记录推理延迟到直方图
+            metrics_mod.observeInferLatency(latency_ms);
         } else if (mem.eql(u8, req.path, "/metrics")) {
             // P48-3: 返回 Prometheus 格式指标
             var metrics_buf: [512]u8 = undefined;

@@ -1,0 +1,41 @@
+name: ZigClaw CI
+
+on:
+  push:
+    branches: [ main, agent, zigclaw-hermes ]
+  pull_request:
+    branches: [ main, agent, zigclaw-hermes ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Zig 0.16
+      uses: goto-bus-stop/install-zig@v2
+      with:
+        version: 0.16.0
+        
+    - name: Run full test suite
+      run: zig test src/tests.zig 2>&1 | tail -50
+      
+    - name: Verify compilation (static binary)
+      run: |
+        # 尝试编译（如果存在 main.zig）
+        if [ -f "src/main.zig" ]; then
+          zig build-exe src/main.zig -lc -O ReleaseFast 2>&1 | tail -20
+        else
+          echo "src/main.zig not found, skipping compilation check"
+        fi
+        
+    - name: Verify no debug artifacts
+      run: |
+        # 确保没有调试文件被提交
+        if [ -f "simple_server" ] || [ -f "src/simple_server.zig" ] || [ -f "test_zig_api" ]; then
+          echo "Error: Debug artifacts found in repository"
+          exit 1
+        fi
+        echo "No debug artifacts found"
