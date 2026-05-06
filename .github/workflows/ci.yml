@@ -14,23 +14,37 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Debug environment
+      run: |
+        echo "PWD: $PWD"
+        echo "HOME: $HOME"
+        ls -la
+        
     - name: Install Zig 0.16.0 (from GitHub Releases)
       run: |
-        echo "Downloading Zig 0.16.0 from GitHub Releases..."
-        wget -q https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz
-        tar xf zig-linux-x86_64-0.16.0.tar.xz
-        mv zig-linux-x86_64-0.16.0 zig-install
-        echo "$PWD/zig-install" >> $GITHUB_PATH
-        rm zig-linux-x86_64-0.16.0.tar.xz
+        echo "=== Downloading Zig 0.16.0 ==="
+        wget -v https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz -O /tmp/zig.tar.xz 2>&1
+        echo "=== Extracting ==="
+        mkdir -p $HOME/zig-install
+        tar xf /tmp/zig.tar.xz -C $HOME/zig-install --strip-components=1
+        echo "=== Verifying ==="
+        ls -la $HOME/zig-install/
+        $HOME/zig-install/zig version
+        echo "=== Adding to PATH ==="
+        echo "$HOME/zig-install" >> $GITHUB_PATH
+        
+    - name: Verify Zig in PATH
+      run: |
+        which zig
         zig version
         
     - name: Run full test suite
-      run: zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tail -50
+      run: zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
         
     - name: Verify compilation (static binary)
       run: |
         if [ -f "src/main.zig" ]; then
-          zig build-exe src/main.zig src/image_feature.c -lc -O ReleaseFast 2>&1 | tail -20
+          zig build-exe src/main.zig src/image_feature.c -lc -OReleaseFast 2>&1
         else
           echo "src/main.zig not found, skipping compilation check"
         fi
