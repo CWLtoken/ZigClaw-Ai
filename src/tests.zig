@@ -57,6 +57,8 @@ const sp = @import("ssd_persist.zig");
 const vi = @import("vector_index.zig");
 const rt = @import("route_table.zig");
 const ib = @import("ibus.zig");
+// 阶段24：入口层加固（P47）
+const ctx = @import("context.zig");
 
 comptime {
     _ = p3;
@@ -106,4 +108,6 @@ comptime {
     _ = vi;
     _ = rt;
     _ = ib;
+    // 阶段24：入口层加固（P47）
+    _ = ctx;
 }
