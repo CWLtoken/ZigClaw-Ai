@@ -112,9 +112,10 @@ pub const HttpServer = struct {
     port: u16,
     metrics: *ServerMetrics,  // 服务器指标
     running: std.atomic.Value(bool),  // 优雅关闭标志
+    shutting_down: std.atomic.Value(bool),  // 优雅关闭探针（阶段27）
 
     /// 初始化 HTTP 服务器
-    pub fn init(metrics: *ServerMetrics) !HttpServer {
+    pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
         var ring = try io_uring.Ring.init();
         errdefer ring.deinit(); // 只在失败时释放
 
@@ -125,10 +126,10 @@ pub const HttpServer = struct {
         );
         errdefer io_uring.Syscall.close(@intCast(listen_fd));
 
-        // 绑定 0.0.0.0:8080
+        // 绑定 0.0.0.0:listen_port（listen_port 为 0 时系统自动分配）
         var addr = io_uring.SockAddrIn{
             .family = io_uring.AF_INET,
-            .port = io_uring.htons(8080),
+            .port = io_uring.htons(listen_port),
             .addr = 0, // 0.0.0.0
         };
         try io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.SockAddrIn));
@@ -153,6 +154,7 @@ pub const HttpServer = struct {
             .port = port,
             .metrics = metrics,
             .running = std.atomic.Value(bool).init(true),
+            .shutting_down = std.atomic.Value(bool).init(false),  // 阶段27：优雅关闭探针
         };
     }
 
@@ -227,8 +229,9 @@ pub const HttpServer = struct {
 
         // 路由处理
             if (mem.eql(u8, req.path, "/health")) {
+                const shutting_down = self.shutting_down.load(.acquire);
                 status_code = 200;
-                handleHealth(self.metrics, conn_fd, req.query) catch |err| {
+                handleHealth(self.metrics, shutting_down, conn_fd, req.query) catch |err| {
                     std.debug.print("处理 /health 失败: {}\n", .{err});
                     status_code = 500;
                 };
@@ -302,6 +305,7 @@ pub const HttpServer = struct {
     /// 请求优雅关闭
     pub fn shutdown(self: *HttpServer) void {
         self.running.store(false, .release);
+        self.shutting_down.store(true, .release);  // 阶段27：设置优雅关闭探针
     }
 
     /// 释放服务器资源
@@ -363,7 +367,7 @@ fn parseHttpRequest(alloc: std.mem.Allocator, raw: []const u8) !HttpRequest {
 }
 
 /// 处理 /health 健康检查（支持 ?verbose=true）
-fn handleHealth(metrics: *const ServerMetrics, conn_fd: i32, query: ?[]const u8) !void {
+fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32, query: ?[]const u8) !void {
     const verbose = if (query) |q| mem.indexOf(u8, q, "verbose=true") != null else false;
 
     if (verbose) {
@@ -374,8 +378,8 @@ fn handleHealth(metrics: *const ServerMetrics, conn_fd: i32, query: ?[]const u8)
         const errors = metrics.get_error_count();
 
         const body = try std.fmt.allocPrint(std.heap.page_allocator,
-            "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d}}}",
-            .{ uptime_ms, total_requests, active, errors }
+            "{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}",
+            .{ uptime_ms, total_requests, active, errors, shutting_down }
         );
         defer std.heap.page_allocator.free(body);
 

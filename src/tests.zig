@@ -70,6 +70,8 @@ const integration_p48 = @import("integration_p48.zig");
 const integration_p49 = @import("integration_p49.zig");
 // P50 集成测试
 const integration_p50 = @import("integration_p50.zig");
+// P51 集成测试（多实例部署验证）
+const p51 = @import("integration_p51.zig");
 
 comptime {
     _ = p3;
@@ -132,4 +134,6 @@ comptime {
     _ = integration_p49;
     // P50 集成测试
     _ = integration_p50;
+    // P51 集成测试（多实例部署验证）
+    _ = p51;
 }

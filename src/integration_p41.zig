@@ -34,7 +34,7 @@ test "P41: 客户端断开连接 - fd 不泄漏（简化）" {
 
 test "P41: 服务器优雅关闭标志" {
     var metrics = http_server.ServerMetrics.init();
-    var server = try http_server.HttpServer.init(&metrics);
+    var server = try http_server.HttpServer.init(&metrics, 0); // 0 = 系统自动分配端口
     defer server.deinit();
     
     // 初始状态：正在运行
