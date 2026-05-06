@@ -227,12 +227,17 @@ pub const HttpServer = struct {
                 self.metrics.inc_errors();
             }
         } else if (mem.eql(u8, req.path, "/metrics")) {
-            // /metrics 占位（返回简单状态）
+            // P48-3: 返回 Prometheus 格式指标
+            var metrics_buf: [512]u8 = undefined;
+            const len = metrics_mod.formatMetrics(&metrics_buf);
             const response = std.fmt.allocPrint(std.heap.page_allocator,
                 "HTTP/1.1 200 OK\r\n" ++
-                "Content-Type: application/json\r\n" ++
+                "Content-Type: text/plain; version=0.0.4\r\n" ++
+                "Content-Length: {d}\r\n" ++
                 "Connection: close\r\n" ++
-                "\r\n{\"status\":\"ok\"}") catch unreachable;
+                "\r\n{s}",
+                .{ len, metrics_buf[0..len] }
+            ) catch unreachable;
             defer std.heap.page_allocator.free(response);
             _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
                 std.debug.print("发送/metrics响应失败: {}\n", .{err});
