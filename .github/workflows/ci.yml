@@ -14,45 +14,29 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Cache Zig 0.16.0
-      id: cache-zig
-      uses: actions/cache@v4
-      with:
-        path: ~/.zig
-        key: zig-0.16.0-${{ runner.os }}
-
     - name: Install Zig 0.16.0 (from GitHub Releases)
-      if: steps.cache-zig.outputs.cache-hit != 'true'
       run: |
-        mkdir -p ~/.zig
-        cd ~/.zig
+        echo "Downloading Zig 0.16.0 from GitHub Releases..."
         wget -q https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz
         tar xf zig-linux-x86_64-0.16.0.tar.xz
-        mv zig-linux-x86_64-0.16.0/* .
-        rm -rf zig-linux-x86_64-0.16.0 zig-linux-x86_64-0.16.0.tar.xz
-        echo "Zig installed to ~/.zig"
-
-    - name: Add Zig to PATH
-      run: echo "$HOME/.zig" >> $GITHUB_PATH
+        mv zig-linux-x86_64-0.16.0 zig-install
+        echo "$PWD/zig-install" >> $GITHUB_PATH
+        rm zig-linux-x86_64-0.16.0.tar.xz
+        zig version
         
-    - name: Verify Zig installation
-      run: zig version
-       
     - name: Run full test suite
-      run: zig test src/tests.zig 2>&1 | tail -50
-      
+      run: zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tail -50
+        
     - name: Verify compilation (static binary)
       run: |
-        # 尝试编译（如果存在 main.zig）
         if [ -f "src/main.zig" ]; then
-          zig build-exe src/main.zig -lc -O ReleaseFast 2>&1 | tail -20
+          zig build-exe src/main.zig src/image_feature.c -lc -O ReleaseFast 2>&1 | tail -20
         else
           echo "src/main.zig not found, skipping compilation check"
         fi
         
     - name: Verify no debug artifacts
       run: |
-        # 确保没有调试文件被提交
         if [ -f "simple_server" ] || [ -f "src/simple_server.zig" ] || [ -f "test_zig_api" ]; then
           echo "Error: Debug artifacts found in repository"
           exit 1
