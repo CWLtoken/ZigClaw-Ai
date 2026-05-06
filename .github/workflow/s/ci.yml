@@ -1,0 +1,56 @@
+name: ZigClaw CI
+
+on:
+  push:
+    branches: [ main, agent, zigclaw-hermes ]
+  pull_request:
+    branches: [ main, agent, zigclaw-hermes ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install Zig 0.16.0
+      run: |
+        echo "=== Debug: Start ==="
+        pwd
+        ls -la
+        echo "=== Downloading Zig ==="
+        curl -L -v https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz -o /tmp/zig.tar.xz 2>&1
+        echo "=== Download complete ==="
+        ls -la /tmp/zig.tar.xz
+        echo "=== Extracting ==="
+        mkdir -p /tmp/zig-install
+        tar xf /tmp/zig.tar.xz -C /tmp/zig-install --strip-components=1
+        echo "=== Verifying ==="
+        ls -la /tmp/zig-install/
+        /tmp/zig-install/zig version
+        echo "=== Adding to PATH ==="
+        echo "/tmp/zig-install" >> $GITHUB_PATH
+        echo "=== PATH updated ==="
+        
+    - name: Verify Zig
+      run: |
+        which zig
+        zig version
+        
+    - name: Run tests
+      run: zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
+        
+    - name: Verify compilation
+      run: |
+        if [ -f "src/main.zig" ]; then
+          zig build-exe src/main.zig src/image_feature.c -lc -OReleaseFast
+        fi
+        
+    - name: Check artifacts
+      run: |
+        if [ -f "simple_server" ] || [ -f "src/simple_server.zig" ] || [ -f "test_zig_api" ]; then
+          echo "Error: Debug artifacts found"
+          exit 1
+        fi
+        echo "No debug artifacts found"
