@@ -14,27 +14,27 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Debug info
+    - name: Debug environment
       run: |
         echo "PWD: $PWD"
         echo "HOME: $HOME"
-        ls -la
-        which git
-        git --version
+        uname -a
+        cat /etc/os-release | head -5
         
-    - name: Install Zig from GitHub Releases
+    - name: Install Zig 0.16.0
       run: |
-        echo "=== Downloading Zig ==="
-        wget --version
-        wget https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz -O /tmp/zig.tar.xz
-        echo "=== Download complete ==="
+        echo "=== Downloading Zig 0.16.0 ==="
+        curl -L https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz -o /tmp/zig.tar.xz
+        echo "Download exit code: $?"
         ls -la /tmp/zig.tar.xz
-        tar xf /tmp/zig.tar.xz -C /tmp
-        echo "=== Extract complete ==="
-        ls -la /tmp/zig-linux-x86_64-0.16.0/
-        /tmp/zig-linux-x86_64-0.16.0/zig version
+        echo "=== Extracting ==="
+        mkdir -p /tmp/zig
+        tar xf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+        echo "=== Verifying ==="
+        ls -la /tmp/zig/
+        /tmp/zig/zig version
         echo "=== Adding to PATH ==="
-        echo "/tmp/zig-linux-x86_64-0.16.0" >> $GITHUB_PATH
+        echo "/tmp/zig" >> $GITHUB_PATH
         
     - name: Verify Zig
       run: |
