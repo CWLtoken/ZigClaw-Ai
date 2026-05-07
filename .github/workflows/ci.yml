@@ -9,37 +9,36 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
-    - name: Debug environment
-      run: |
-        echo "PWD: $PWD"
-        echo "HOME: $HOME"
-        uname -a
-        cat /etc/os-release | head -5
-        
+
     - name: Install Zig 0.16.0
       run: |
         echo "=== Downloading Zig 0.16.0 ==="
-        curl -L https://github.com/ziglang/zig/releases/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz -o /tmp/zig.tar.xz
-        echo "Download exit code: $?"
-        ls -la /tmp/zig.tar.xz
+        curl -fL --retry 3 --retry-delay 2 \
+          https://ziglang.org/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz \
+          -o /tmp/zig.tar.xz
+
+        echo "=== Verifying download ==="
+        file /tmp/zig.tar.xz
+        ls -lh /tmp/zig.tar.xz
+
         echo "=== Extracting ==="
         mkdir -p /tmp/zig
-        tar xf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+        tar xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+
         echo "=== Verifying ==="
-        ls -la /tmp/zig/
         /tmp/zig/zig version
+
         echo "=== Adding to PATH ==="
         echo "/tmp/zig" >> $GITHUB_PATH
-        
+
     - name: Verify Zig
       run: |
         which zig
         zig version
-        
+
     - name: Run tests
       run: zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
