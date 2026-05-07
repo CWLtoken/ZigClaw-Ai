@@ -27,17 +27,17 @@ jobs:
         /tmp/zig/zig version
         echo "/tmp/zig" >> $GITHUB_PATH
 
-    - name: Build project
+    - name: Build
       run: zig build 2>&1
 
-    - name: Run tests
+    - name: Test (ReleaseSafe)
       run: |
-        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
-        TEST_EXIT=${PIPESTATUS[0]}
-        echo "TEST_EXIT=$TEST_EXIT" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "## Test Results" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        tail -50 /tmp/test_output.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        exit $TEST_EXIT
+        zig test src/tests.zig src/image_feature.c -OReleaseSafe --library c 2>&1 | tee /tmp/test_output.txt
+        exit ${PIPESTATUS[0]}
+
+    - name: Upload log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-log-${{ github.run_id }}-${{ github.event_name }}
+        path: /tmp/test_output.txt
