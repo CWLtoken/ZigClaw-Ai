@@ -28,24 +28,9 @@ jobs:
         echo "/tmp/zig" >> $GITHUB_PATH
 
     - name: Build project
-      run: zig build 2>&1 | tee /tmp/build_output.txt
+      run: zig build 2>&1
 
     - name: Run tests
-      continue-on-error: true
       run: |
-        echo "=== Running tests ===" | tee /tmp/test_output.txt
-        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee -a /tmp/test_output.txt
-        TEST_EXIT=${PIPESTATUS[0]}
-        echo "EXIT_CODE=$TEST_EXIT" | tee -a /tmp/test_output.txt
-        if [ $TEST_EXIT -ne 0 ]; then
-          echo "=== ERRORS ===" | tee -a /tmp/test_output.txt
-          grep -n -E "^[0-9]+/.*test\." /tmp/test_output.txt | grep -v "OK" | tee -a /tmp/test_output.txt
-        fi
-        exit $TEST_EXIT
-
-    - name: Upload logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: ci-logs-${{ github.event_name }}-${{ github.sha }}
-        path: /tmp/test_output.txt
+        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
+        exit ${PIPESTATUS[0]}
