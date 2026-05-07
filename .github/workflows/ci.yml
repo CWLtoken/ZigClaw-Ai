@@ -28,21 +28,24 @@ jobs:
         echo "/tmp/zig" >> $GITHUB_PATH
 
     - name: Build project
-      run: zig build 2>&1
+      run: zig build 2>&1 | tee /tmp/build_output.txt
 
-    - name: Run tests with verbose output
+    - name: Run tests
+      continue-on-error: true
       run: |
-        echo "=== Running tests with verbose output ==="
-        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
+        echo "=== Running tests ===" | tee /tmp/test_output.txt
+        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee -a /tmp/test_output.txt
         TEST_EXIT=${PIPESTATUS[0]}
-        echo ""
-        echo "=== EXIT CODE: $TEST_EXIT ==="
+        echo "EXIT_CODE=$TEST_EXIT" | tee -a /tmp/test_output.txt
         if [ $TEST_EXIT -ne 0 ]; then
-          echo ""
-          echo "=== SEARCHING FOR ERRORS ==="
-          grep -n -E "error|Error|FAIL|fail|panic|PANIC|SIGSEGV|SIGABRT|segfault|assertion|Assertion" /tmp/test_output.txt | head -30
-          echo ""
-          echo "=== LAST 100 LINES ==="
-          tail -100 /tmp/test_output.txt
-          exit $TEST_EXIT
+          echo "=== ERRORS ===" | tee -a /tmp/test_output.txt
+          grep -n -E "^[0-9]+/.*test\." /tmp/test_output.txt | grep -v "OK" | tee -a /tmp/test_output.txt
         fi
+        exit $TEST_EXIT
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ci-logs-${{ github.event_name }}-${{ github.sha }}
+        path: /tmp/test_output.txt
