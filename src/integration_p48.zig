@@ -41,7 +41,7 @@ test "P48 Integration: 鉴权失败指标" {
 
 // 集成测试3：Prometheus 格式输出
 test "P48 Integration: Prometheus 格式输出" {
-    var buf: [512]u8 = undefined;
+    var buf: [2048]u8 = undefined; // 增大缓冲区以适应 P49 新增指标
     const len = metrics_mod.formatMetrics(&buf);
     
     // 验证长度合理

@@ -1,273 +1,254 @@
-# ZigClaw v2.4 部署手册
+# ZigClaw v2.4 部署文档
 
-> 本文档描述ZigClaw的编译、配置、运行和维护。
+## 目录
+- [容器化部署](#容器化部署)
+- [前置条件](#前置条件)
+- [快速开始](#快速开始)
+- [配置说明](#配置说明)
+- [验证部署](#验证部署)
+- [生产环境建议](#生产环境建议)
+- [故障排查](#故障排查)
 
-## 系统要求
+---
 
-- **操作系统**: Linux (内核 5.1+，支持 io_uring)
-- **Zig版本**: 0.16.0 或更高
-- **可选依赖**: Ollama (推理服务，http://localhost:11434)
-- **内存**: 建议 512MB+ (取决于推理模型)
-- **文件描述符**: 建议 ulimit -n 1024+
+## 容器化部署
 
-## 编译指令
+ZigClaw v2.4 提供完整的 Docker 容器化方案，包含三个服务：
+- **zigclaw**：主服务（静态编译的 Zig 二进制）
+- **ollama**：本地 LLM 推理引擎
+- **nginx**：TLS 终止 + 反向代理
+
+---
+
+## 前置条件
+
+- Docker 20.10+
+- Docker Compose 1.29+
+- 至少 4GB RAM（Ollama 模型加载）
+- 至少 10GB 磁盘空间
+
+---
+
+## 快速开始
 
 ### 1. 克隆仓库
 ```bash
-git clone git@github.com:CWLtoken/ZigClaw-AI.git
+git clone https://github.com/CWLtoken/ZigClaw-AI.git
 cd ZigClaw-AI
-git checkout agent  # 或 docs 分支查看文档
 ```
 
-### 2. 编译项目
+### 2. 生成 TLS 证书（自签名）
 ```bash
-# 开发模式（快速编译）
-zig build
+./scripts/generate_certs.sh
+```
+生成位置：`./certs/server.crt` 和 `./certs/server.key`
 
-# 发布模式（优化）
-zig build -Drelease-fast
-
-# 输出位置
-ls zig-out/bin/zigclaw-http
+### 3. 配置环境变量（可选）
+创建 `.env` 文件：
+```bash
+cat > .env <<EOF
+ZIGCLAW_PORT=8080
+METRICS_PORT=9090
+API_KEY=your-secure-api-key-here
+EOF
 ```
 
-### 3. 运行测试
+### 4. 启动服务栈
 ```bash
-# 全量测试（必须76/76全绿）
-zig build test
+docker-compose up -d
+```
 
-# 单个测试
-zig build test -fq -- integration_p41.test.P41
+首次启动会：
+- 构建 ZigClaw 静态二进制（多阶段构建）
+- 拉取 Ollama 和 Nginx 镜像
+- 启动所有服务
+
+### 5. 查看日志
+```bash
+docker-compose logs -f zigclaw
 ```
 
 ---
 
-## 运行方式
+## 配置说明
 
-### HTTP 服务器模式
-```bash
-# 默认端口8080
-./zig-out/bin/zigclaw-http
-
-# 自定义端口（如果支持）
-./zig-out/bin/zigclaw-http --port 8080
-```
-
-### 预期输出
-```
-🌐 HTTP 服务器启动: http://127.0.0.1:8080/
-等待连接...
-```
-
-### 优雅关闭
-```bash
-# 发送 SIGINT (Ctrl+C) 触发优雅关闭
-# 服务器会：
-# 1. 设置 running = false
-# 2. 停止接受新连接
-# 3. 等待现有连接处理完成
-# 4. 释放资源并退出
-```
-
----
-
-## 环境变量
+### 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `PORT` | 8080 | HTTP服务器监听端口 |
-| `OLLAMA_URL` | http://localhost:11434 | Ollama推理服务地址 |
-| `RUST_BACKTRACE` | 0 | Rust推理引擎的回溯（如果使用） |
-| `ZIG_DEBUG` | 0 | ZigClaw调试输出（如果支持） |
+| `ZIGCLAW_PORT` | 8080 | ZigClaw HTTP 端口 |
+| `METRICS_PORT` | 9090 | Prometheus 指标端口 |
+| `API_KEY` | changeme-in-production | API 认证密钥 |
+| `OLLAMA_URL` | http://ollama:11434 | Ollama 服务地址（容器内） |
+
+### 端口映射
+
+| 服务 | 容器内端口 | 宿主机端口 | 说明 |
+|------|-----------|-----------|------|
+| zigclaw | 8080 | 8080 | HTTP API |
+| zigclaw | 9090 | 9090 | Prometheus 指标 |
+| ollama | 11434 | 11434 | Ollama API |
+| nginx | 80 | 80 | HTTP（重定向到 HTTPS） |
+| nginx | 443 | 443 | HTTPS（TLS 终止） |
 
 ---
 
-## Ollama 配置
+## 验证部署
 
-### 安装 Ollama (可选)
+### 1. 检查服务健康状态
 ```bash
-# Linux
-curl -fsSL https://ollama.com/install.sh | sh
+docker-compose ps
+```
+所有服务应为 `Up (healthy)` 状态。
 
-# 启动 Ollama 服务
-ollama serve &
-
-# 拉取模型（例如 llama3.2）
-ollama pull llama3.2
+### 2. 测试健康检查（直接访问）
+```bash
+curl http://localhost:8080/health
+```
+预期响应：
+```json
+{"status": "ok"}
 ```
 
-### 验证 Ollama
+### 3. 测试 HTTPS 访问（通过 Nginx）
 ```bash
-# 检查服务
-curl http://localhost:11434/api/tags
+curl -k https://localhost/health
+```
+`-k` 跳过自签名证书验证。
 
-# 测试推理
-curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.2",
-  "prompt": "Hello"
-}'
+### 4. 测试 Prometheus 指标
+```bash
+curl http://localhost:9090/metrics
+```
+或通过 Nginx：
+```bash
+curl -k https://localhost/metrics
 ```
 
-### ZigClaw 与 Ollama 集成
-- 如果 Ollama 不可用，ZigClaw 返回 503 Service Unavailable
-- 日志显示：`[default] (warn): Ollama 调用失败: error.OllamaNotAvailable，返回错误响应`
-- 不影响其他功能（如 /health 检查）
-
----
-
-## API 端点
-
-### 健康检查
+### 5. 测试推理功能
 ```bash
-# 基础检查
-curl http://127.0.0.1:8080/health
-# 返回: {"status":"ok","service":"zigclaw-http"}
-
-# 详细指标（verbose模式）
-curl http://127.0.0.1:8080/health?verbose=true
-# 返回包含 uptime, total_requests, active_connections, error_count 的详细JSON
-```
-
-### 推理端点（需要Ollama）
-```bash
-# 文本推理
-curl "http://127.0.0.1:8080/infer?input=如何优化性能&modality=text"
-
-# 图像推理（如果支持）
-curl "http://127.0.0.1:8080/infer?input=图片分析&modality=image"
-```
-
-### 其他端点
-- `/` — 欢迎页面
-- `/echo` — 回显测试
-- `/status` — 服务状态（如果实现）
-
----
-
-## 可观测性
-
-### ServerMetrics（服务器指标）
-- **实现**: `src/http_server.zig` 中的 `ServerMetrics` 结构体
-- **原子操作**: 使用 `std.atomic.Value` 保证线程安全
-- **指标**:
-  - `total_requests` — 总请求数（原子递增）
-  - `active_connections` — 活跃连接数（原子递增/递减）
-  - `error_count` — 错误计数（原子递增）
-  - `uptime_start` — 启动时间戳（当前简化版返回0）
-
-### 日志输出
-- 使用 `std.debug.print` 输出调试信息
-- 格式：`📊`, `🌐`, `✅`, `⚠️` 等emoji前缀
-- 示例：
-  ```
-  🌐 HTTP 服务器启动: http://127.0.0.1:8080/
-  等待连接...
-  /health 请求处理完成 (verbose=false)
-  ```
-
----
-
-## 故障排除
-
-### 常见问题
-
-#### 1. 编译错误：`std.time.milliTimestamp` 不存在
-- **原因**: Zig 0.16 时间API变化
-- **解决**: 已简化处理，`uptime` 暂时返回0，等待Zig 0.17
-
-#### 2. 端口占用：Address already in use
-```bash
-# 查找占用进程
-lsof -i :8080
-# 杀死进程
-kill -9 <PID>
-```
-
-#### 3. fd泄漏检测
-```bash
-# 查看进程fd使用
-ls -la /proc/$(pgrep zigclaw-http)/fd | wc -l
-```
-
-#### 4. RSS内存增长
-```bash
-# 监控内存
-watch -n 1 "ps aux | grep zigclaw-http | grep -v grep"
-```
-
-#### 5. Ollama不可用
-- **现象**: 推理请求返回503
-- **解决**: 检查Ollama服务，或接受降级（不影响/health）
-
----
-
-## 生产部署建议
-
-### 1. 使用 systemd 管理
-```ini
-# /etc/systemd/system/zigclaw.service
-[Unit]
-Description=ZigClaw HTTP Server
-After=network.target
-
-[Service]
-Type=simple
-User=zigclaw
-WorkingDirectory=/opt/zigclaw
-ExecStart=/opt/zigclaw/zig-out/bin/zigclaw-http
-Restart=on-failure
-RestartSec=5s
-# 优雅关闭支持
-KillSignal=SIGINT
-TimeoutStopSec=30
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 2. 日志轮转
-```bash
-# 使用 systemd 的 journalctl 或配置 rsyslog
-journalctl -u zigclaw -f
-```
-
-### 3. 监控告警
-- 监控 `/health?verbose=true` 端点
-- 设置告警：error_count 激增、active_connections 异常
-- 集成 Prometheus（如果实现 `/metrics` 端点）
-
-### 4. 安全加固
-- 不要以 root 运行
-- 使用防火墙限制访问（仅允许必要IP）
-- 考虑添加 API Key 认证（如果暴露到公网）
-
----
-
-## 版本与升级
-
-### 当前版本
-- **Version**: v2.4
-- **Tag**: v5.4-p41-observability
-- **Commit**: ceca9a6
-- **测试**: 76/76 全绿 ✅
-
-### 升级步骤
-```bash
-# 1. 拉取最新代码
-git pull origin agent
-
-# 2. 重新编译
-zig build -Drelease-fast
-
-# 3. 运行测试验证
-zig build test
-
-# 4. 重启服务
-systemctl restart zigclaw
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-api-key" \
+  -d '{"model": "llama2", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 
 ---
 
-**维护者**: ZigClaw Team  
-**最后更新**: 2026-05-06  
-**架构师确认**: v2.4 进入收尾阶段，文档化完成。
+## 生产环境建议
+
+### 1. TLS 证书
+不要用自签名证书！使用：
+- **Let's Encrypt**（推荐）：`certbot` + `nginx`
+- **商业证书**：购买后替换 `certs/` 目录下的文件
+
+修改 `nginx.conf` 中的证书路径，或通过卷挂载覆盖。
+
+### 2. API Key 安全
+- 使用强随机密钥：`openssl rand -hex 32`
+- 不要提交 `.env` 到 Git
+- 考虑使用 Docker Secrets 或 Vault
+
+### 3. Ollama 模型管理
+默认 Ollama 不预装模型，首次需要拉取：
+```bash
+docker exec ollama ollama pull llama2
+```
+
+### 4. 资源限制
+在 `docker-compose.yml` 中添加：
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: '2'
+      memory: 4G
+```
+
+### 5. 日志管理
+配置 logrotate 或使用 Docker 日志驱动：
+```yaml
+logging:
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+---
+
+## 故障排查
+
+### 服务无法启动
+
+**查看日志**：
+```bash
+docker-compose logs zigclaw
+docker-compose logs ollama
+docker-compose logs nginx
+```
+
+**检查健康状态**：
+```bash
+docker inspect zigclaw | jq '.[0].State.Health'
+```
+
+### ZigClaw 编译失败
+
+进入 builder 容器调试：
+```bash
+docker-compose build --progress=plain zigclaw
+```
+
+检查 Zig 版本：
+```bash
+docker run --rm ziglang/zig:0.16.0 zig version
+```
+
+### Ollama 无法连接
+
+检查网络：
+```bash
+docker exec zigclaw ping ollama
+docker exec ollama ollama list
+```
+
+### Nginx TLS 错误
+
+检查证书：
+```bash
+openssl x509 -in certs/server.crt -text -noout
+```
+
+检查 Nginx 配置：
+```bash
+docker exec zigclaw-nginx nginx -t
+```
+
+---
+
+## 停止服务
+
+```bash
+docker-compose down
+```
+
+保留数据卷（Ollama 模型）：
+```bash
+docker-compose down --volumes  # 会删除 Ollama 数据！
+```
+
+---
+
+## 版本信息
+
+- ZigClaw：v2.4 (v6.0.0-final)
+- Zig：0.16.0
+- Alpine：3.18
+- Nginx：1.25-alpine
+- Ollama：0.1.26
+
+---
+
+**文档版本**：2026-05-06
+**维护者**：ZigClaw Team

@@ -1,0 +1,34 @@
+name: ZigClaw CI
+
+on:
+  push:
+    branches: [ main, agent, zigclaw-hermes ]
+  pull_request:
+    branches: [ main, agent, zigclaw-hermes ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install Zig 0.16.0
+      run: |
+        curl -fL --connect-timeout 30 --max-time 600 --retry 5 --retry-delay 5 \
+          https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
+          -o /tmp/zig.tar.xz
+        mkdir -p /tmp/zig
+        tar xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
+        /tmp/zig/zig version
+        echo "/tmp/zig" >> $GITHUB_PATH
+
+    - name: Build
+      run: zig build 2>&1
+
+    - name: Test
+      run: zig test src/tests.zig src/image_feature.c -OReleaseSafe --library c 2>&1

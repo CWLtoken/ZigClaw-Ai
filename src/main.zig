@@ -1,5 +1,5 @@
 // src/main.zig
-// ZigClaw HTTP 服务器启动器 - 阶段23C: 故障恢复与可观测性
+// ZigClaw HTTP 服务器启动器 - 阶段27: 多实例部署支持
 const std = @import("std");
 const io_uring = @import("io_uring.zig");
 const http_server = @import("http_server.zig");
@@ -22,13 +22,40 @@ fn sigint_handler(sig: i32, info: *std.posix.siginfo_t, ucontext: ?*anyopaque) c
 
 pub fn main() !void {
     const log = std.log;
-    log.info("启动 ZigClaw HTTP 服务器（阶段23C - 可观测性）...", .{});
-
+    log.info("启动 ZigClaw HTTP 服务器（阶段27 - 多实例部署支持）...", .{});
+    
+    // 解析命令行参数
+    var port: u16 = 8080; // 默认端口
+    var args = std.process.args();
+    
+    // 跳过程序名
+    _ = args.next();
+    
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--port")) {
+            if (args.next()) |port_str| {
+                port = std.fmt.parseInt(u16, port_str, 10) catch {
+                    std.debug.print("错误：无效的端口号 '{s}'\n", .{port_str});
+                    std.process.exit(1);
+                };
+            } else {
+                std.debug.print("错误：--port 需要指定端口号\n", .{});
+                std.process.exit(1);
+            }
+        } else if (std.mem.eql(u8, arg, "--help")) {
+            std.debug.print("用法: zigclaw [--port PORT]\n", .{});
+            std.debug.print("  --port PORT  指定监听端口（默认: 8080）\n", .{});
+            return;
+        }
+    }
+    
+    std.debug.print("使用端口: {d}\n", .{port});
+    
     // 1. 初始化服务器指标
     var metrics = http_server.ServerMetrics.init();
     
-    // 2. 初始化 HTTP 服务器
-    var server = try http_server.HttpServer.init(&metrics);
+    // 2. 初始化 HTTP 服务器（传入端口参数）
+    var server = try http_server.HttpServer.init(&metrics, port);
     defer server.deinit();
     
     // 3. 设置全局指针（供信号处理函数使用）

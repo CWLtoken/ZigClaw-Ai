@@ -318,7 +318,7 @@ pub const Syscall = struct {
             @as(usize, flags),
             @as(usize, mode),
         );
-        const result: i32 = @intCast(rc);
+        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) {
             return SyscallError.OpenFailed;
         }
@@ -382,7 +382,7 @@ pub const Syscall = struct {
     /// socket(domain, type, protocol) -> fd
     pub fn socket(domain: u32, sock_type: u32, protocol: u32) SyscallError!i32 {
         const rc = std_os.syscall3(.socket, domain, sock_type, protocol);
-        const result: i32 = @intCast(rc);
+        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) return SyscallError.OpenFailed;
         return result;
     }
@@ -412,7 +412,7 @@ pub const Syscall = struct {
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
         }
-        const result: i32 = @intCast(rc);
+        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0 and result != -115) return SyscallError.OpenFailed;
     }
 
@@ -423,7 +423,7 @@ pub const Syscall = struct {
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
         }
-        const result: i32 = @intCast(rc);
+        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) return SyscallError.OpenFailed;
         return result;
     }
@@ -445,7 +445,7 @@ pub const Syscall = struct {
             last_send_rc = rc;
             return SyscallError.OpenFailed;
         }
-        const result: i32 = @intCast(rc);
+        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) {
             last_send_rc = @as(usize, @bitCast(@as(i64, result)));
             return SyscallError.OpenFailed;
@@ -462,7 +462,7 @@ pub const Syscall = struct {
             if (addr) |a| @intFromPtr(a) else 0,
             if (addrlen) |al| @intFromPtr(al) else 0,
         );
-        const result: i32 = @intCast(rc);
+        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) return SyscallError.OpenFailed;
         return result;
     }

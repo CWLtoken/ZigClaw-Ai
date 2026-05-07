@@ -4,6 +4,9 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const c = @cImport({
+    @cInclude("time.h");
+});
 
 /// 全局请求ID计数器（原子操作，无锁）
 /// 使用 fetchAdd 保证多线程安全（虽然当前单线程）
@@ -22,9 +25,19 @@ pub const RequestContext = struct {
         // 原子递增，返回新值（旧值+1）
         const old_id = @atomicRmw(u64, &global_request_id, .Add, 1, .seq_cst);
         const id = old_id + 1;
+        
+        // 使用 C 的 clock_gettime 获取单调时间（毫秒）
+        var ts: c.struct_timespec = undefined;
+        const rc = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
+        var timestamp_ms: i64 = 0;
+        if (rc == 0) {
+            timestamp_ms = @as(i64, @intCast(ts.tv_sec)) * 1000 +
+                          @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
+        }
+        
         return .{
             .id = id,
-            .timestamp_ms = 0, // TODO: implement real timestamp for Zig 0.16
+            .timestamp_ms = timestamp_ms,
             .method = method,
             .path = path,
             .auth_token_hash = null,

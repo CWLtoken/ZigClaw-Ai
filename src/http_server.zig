@@ -6,6 +6,10 @@ const mem = std.mem;
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
+const http_log = @import("http_log.zig");
+const c = @cImport({
+    @cInclude("time.h");
+});
 
 // 服务器指标（原子操作保证线程安全）
 pub const ServerMetrics = struct {
@@ -40,8 +44,8 @@ pub const ServerMetrics = struct {
     }
     
     pub fn get_uptime_ms(self: *const ServerMetrics) i64 {
-        _ = self; // 消除未使用警告
-        return 0; // 简化：暂时返回0，真实实现需要正确的时间戳获取
+        if (self.uptime_start == 0) return 0;
+        return getCurrentTimeMs() - self.uptime_start;
     }
     
     pub fn get_total_requests(self: *const ServerMetrics) u64 {
@@ -56,6 +60,17 @@ pub const ServerMetrics = struct {
         return self.error_count.load(.acquire);
     }
 };
+
+// 获取当前单调时间（毫秒）
+fn getCurrentTimeMs() i64 {
+    var ts: c.struct_timespec = undefined;
+    const rc = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
+    if (rc == 0) {
+        return @as(i64, @intCast(ts.tv_sec)) * 1000 +
+               @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
+    }
+    return 0;
+}
 
 // HTTP 请求结构
 const HttpRequest = struct {
@@ -97,9 +112,10 @@ pub const HttpServer = struct {
     port: u16,
     metrics: *ServerMetrics,  // 服务器指标
     running: std.atomic.Value(bool),  // 优雅关闭标志
+    shutting_down: std.atomic.Value(bool),  // 优雅关闭探针（阶段27）
 
     /// 初始化 HTTP 服务器
-    pub fn init(metrics: *ServerMetrics) !HttpServer {
+    pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
         var ring = try io_uring.Ring.init();
         errdefer ring.deinit(); // 只在失败时释放
 
@@ -110,10 +126,10 @@ pub const HttpServer = struct {
         );
         errdefer io_uring.Syscall.close(@intCast(listen_fd));
 
-        // 绑定 0.0.0.0:8080
+        // 绑定 0.0.0.0:listen_port（listen_port 为 0 时系统自动分配）
         var addr = io_uring.SockAddrIn{
             .family = io_uring.AF_INET,
-            .port = io_uring.htons(8080),
+            .port = io_uring.htons(listen_port),
             .addr = 0, // 0.0.0.0
         };
         try io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.SockAddrIn));
@@ -138,6 +154,7 @@ pub const HttpServer = struct {
             .port = port,
             .metrics = metrics,
             .running = std.atomic.Value(bool).init(true),
+            .shutting_down = std.atomic.Value(bool).init(false),  // 阶段27：优雅关闭探针
         };
     }
 
@@ -201,18 +218,30 @@ pub const HttpServer = struct {
         // 生成请求上下文（原子ID，零分配）
         var ctx = context.RequestContext.init(req.method, req.path);
         std.debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
+        
+        // P50: 日志相关变量
+        var status_code: u16 = 0;
+        var err_msg: ?[]const u8 = null;
+        var latency_ms: f64 = 0.0;
 
         // P48-2: 递增 HTTP 请求总数
         metrics_mod.incrHttpRequests();
 
         // 路由处理
             if (mem.eql(u8, req.path, "/health")) {
-                handleHealth(self.metrics, conn_fd, req.query) catch |err| {
+                const shutting_down = self.shutting_down.load(.acquire);
+                status_code = 200;
+                handleHealth(self.metrics, shutting_down, conn_fd, req.query) catch |err| {
                     std.debug.print("处理 /health 失败: {}\n", .{err});
+                    status_code = 500;
                 };
         } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
             // P48-2: 递增推理请求计数
             metrics_mod.incrInfer();
+            
+            // 计算推理延迟（使用单调时间差）
+            const now_ms = getCurrentTimeMs();
+            latency_ms = @as(f64, @floatFromInt(now_ms - ctx.timestamp_ms));
             
             // POST /v1/infer 处理（鉴权+推理）
             const auth_header = if (req.headers.get("Authorization")) |val| val else null;
@@ -221,13 +250,21 @@ pub const HttpServer = struct {
                 metrics_mod.incrAuthFailures();
                 sendErrorResponse(conn_fd, 401, "Unauthorized") catch {};
                 self.metrics.inc_errors();
+                status_code = 401;
+                err_msg = "unauthorized";
             } else {
                 // 鉴权成功，暂返回 503（后续接入真实推理）
                 sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
                 self.metrics.inc_errors();
+                status_code = 503;
+                err_msg = "service unavailable";
             }
+            
+            // P49-2: 记录推理延迟到直方图
+            metrics_mod.observeInferLatency(latency_ms);
         } else if (mem.eql(u8, req.path, "/metrics")) {
             // P48-3: 返回 Prometheus 格式指标
+            status_code = 200;
             var metrics_buf: [512]u8 = undefined;
             const len = metrics_mod.formatMetrics(&metrics_buf);
             const response = std.fmt.allocPrint(std.heap.page_allocator,
@@ -243,10 +280,15 @@ pub const HttpServer = struct {
                 std.debug.print("发送/metrics响应失败: {}\n", .{err});
             };
         } else {
+                status_code = 404;
+                err_msg = "Not Found";
                 sendErrorResponse(conn_fd, 404, "Not Found") catch {};
                 self.metrics.inc_errors();
             }
 
+            // P50: 记录请求日志
+            http_log.logRequest(ctx.id, req.method, req.path, status_code, latency_ms, err_msg);
+            
             // 关闭连接
             io_uring.Syscall.close(@intCast(conn_fd));
             self.metrics.dec_connections();
@@ -263,6 +305,7 @@ pub const HttpServer = struct {
     /// 请求优雅关闭
     pub fn shutdown(self: *HttpServer) void {
         self.running.store(false, .release);
+        self.shutting_down.store(true, .release);  // 阶段27：设置优雅关闭探针
     }
 
     /// 释放服务器资源
@@ -324,7 +367,7 @@ fn parseHttpRequest(alloc: std.mem.Allocator, raw: []const u8) !HttpRequest {
 }
 
 /// 处理 /health 健康检查（支持 ?verbose=true）
-fn handleHealth(metrics: *const ServerMetrics, conn_fd: i32, query: ?[]const u8) !void {
+fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32, query: ?[]const u8) !void {
     const verbose = if (query) |q| mem.indexOf(u8, q, "verbose=true") != null else false;
 
     if (verbose) {
@@ -335,8 +378,8 @@ fn handleHealth(metrics: *const ServerMetrics, conn_fd: i32, query: ?[]const u8)
         const errors = metrics.get_error_count();
 
         const body = try std.fmt.allocPrint(std.heap.page_allocator,
-            "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d}}}",
-            .{ uptime_ms, total_requests, active, errors }
+            "{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}",
+            .{ uptime_ms, total_requests, active, errors, shutting_down }
         );
         defer std.heap.page_allocator.free(body);
 
