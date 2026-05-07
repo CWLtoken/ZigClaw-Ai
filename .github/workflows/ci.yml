@@ -30,14 +30,5 @@ jobs:
     - name: Build
       run: zig build 2>&1
 
-    - name: Test (ReleaseSafe)
-      run: |
-        zig test src/tests.zig src/image_feature.c -OReleaseSafe --library c 2>&1 | tee /tmp/test_output.txt
-        exit ${PIPESTATUS[0]}
-
-    - name: Upload log
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-log-${{ github.run_id }}-${{ github.event_name }}
-        path: /tmp/test_output.txt
+    - name: Test
+      run: zig test src/tests.zig src/image_feature.c -OReleaseSafe --library c 2>&1
