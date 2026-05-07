@@ -21,28 +21,46 @@ jobs:
         curl -fL --connect-timeout 30 --max-time 600 --retry 5 --retry-delay 5 \
           https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
           -o /tmp/zig.tar.xz
-
-        echo "=== Verifying download ==="
-        file /tmp/zig.tar.xz
-        ls -lh /tmp/zig.tar.xz
-
-        echo "=== Extracting ==="
         mkdir -p /tmp/zig
         tar xJf /tmp/zig.tar.xz -C /tmp/zig --strip-components=1
-
-        echo "=== Verifying ==="
         /tmp/zig/zig version
-
-        echo "=== Adding to PATH ==="
         echo "/tmp/zig" >> $GITHUB_PATH
 
-    - name: Verify Zig
+    - name: Verify environment
       run: |
         which zig
         zig version
+        which gcc
+        gcc --version | head -1
+        uname -a
+        nproc
+        free -h
+        df -h /
 
-    - name: Run tests
+    - name: Build test binary
       run: |
-        echo "=== Running zig test ==="
-        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
-        echo "=== Test exit code: $? ==="
+        echo "=== Building test binary ==="
+        zig test src/tests.zig src/image_feature.c -ODebug --library c --test-name-prefix "ci_" 2>&1 | head -5
+        echo "Build exit code: $?"
+
+    - name: Run tests with error capture
+      run: |
+        echo "=== Running tests ==="
+        set +e
+        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
+        TEST_EXIT=$?
+        set -e
+        echo ""
+        echo "=== TEST EXIT CODE: $TEST_EXIT ==="
+        echo ""
+        if [ $TEST_EXIT -ne 0 ]; then
+          echo "=== FAILURE DETECTED ==="
+          echo "=== Last 100 lines ==="
+          tail -100 /tmp/test_output.txt
+          echo ""
+          echo "=== Searching for error patterns ==="
+          grep -n -i "error\|fail\|panic\|segfault\|SIGSEGV\|SIGABRT\|overflow\|assertion" /tmp/test_output.txt | tail -20 || echo "No error patterns found"
+          exit $TEST_EXIT
+        else
+          echo "=== ALL TESTS PASSED ==="
+        fi
