@@ -14,7 +14,7 @@ pub const Server = struct {
 
     /// 初始化服务端：socket → bind → listen
     pub fn init(ring: *io_uring.Ring) !Server {
-        _ = ring; // ZC-9-02: 消除未使用参数警告
+        _ = ring; // TODO: remove ring dependency, tracked as tech debt
         // 1. 创建监听 socket
         const listen_fd = try io_uring.Syscall.socket(
             io_uring.AF_INET,

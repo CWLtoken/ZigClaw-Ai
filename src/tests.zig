@@ -136,4 +136,8 @@ comptime {
     _ = integration_p50;
     // P51 集成测试（多实例部署验证）
     _ = p51;
+
+    // v3.0 blueprint references (ensure these files compile)
+    _ = @import("interface.zig");
+    _ = @import("feedback.zig");
 }

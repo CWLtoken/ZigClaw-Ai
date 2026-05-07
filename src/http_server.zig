@@ -267,15 +267,18 @@ pub const HttpServer = struct {
             status_code = 200;
             var metrics_buf: [512]u8 = undefined;
             const len = metrics_mod.formatMetrics(&metrics_buf);
-            const response = std.fmt.allocPrint(std.heap.page_allocator,
-                "HTTP/1.1 200 OK\r\n" ++
+            const response = std.fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
                 "Content-Type: text/plain; version=0.0.4\r\n" ++
                 "Content-Length: {d}\r\n" ++
                 "Connection: close\r\n" ++
                 "\r\n{s}",
                 .{ len, metrics_buf[0..len] }
-            ) catch unreachable;
-            defer std.heap.page_allocator.free(response);
+            ) catch {
+                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                io_uring.Syscall.close(@intCast(conn_fd));
+                self.metrics.dec_connections();
+                continue;
+            };
             _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
                 std.debug.print("发送/metrics响应失败: {}\n", .{err});
             };
@@ -377,13 +380,14 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
         const active = metrics.get_active_connections();
         const errors = metrics.get_error_count();
 
-        const body = try std.fmt.allocPrint(std.heap.page_allocator,
-            "{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}",
+        var body_buf: [512]u8 = undefined;
+        const body = try std.fmt.bufPrint(&body_buf,
+            "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}}",
             .{ uptime_ms, total_requests, active, errors, shutting_down }
         );
-        defer std.heap.page_allocator.free(body);
 
-        const response = try std.fmt.allocPrint(std.heap.page_allocator,
+        var resp_buf: [1024]u8 = undefined;
+        const response = try std.fmt.bufPrint(&resp_buf,
             "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: application/json\r\n" ++
             "Content-Length: {d}\r\n" ++
@@ -391,7 +395,6 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
             "\r\n{s}",
             .{ body.len, body }
         );
-        defer std.heap.page_allocator.free(response);
 
         _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
             std.debug.print("发送详细健康响应失败: {}\n", .{err});
