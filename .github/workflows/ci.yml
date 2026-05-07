@@ -27,36 +27,9 @@ jobs:
         /tmp/zig/zig version
         echo "/tmp/zig" >> $GITHUB_PATH
 
-    - name: Check environment
-      run: |
-        zig version
-        which gcc
-        gcc --version | head -1
-        echo "=== Check C headers ==="
-        echo '#include <dirent.h>' | gcc -E -x c - -o /dev/null 2>&1 && echo "dirent.h: OK" || echo "dirent.h: FAIL"
-        echo '#include <stdio.h>' | gcc -E -x c - -o /dev/null 2>&1 && echo "stdio.h: OK" || echo "stdio.h: FAIL"
-        echo '#include <sys/types.h>' | gcc -E -x c - -o /dev/null 2>&1 && echo "sys/types.h: OK" || echo "sys/types.h: FAIL"
-        echo "=== Check source files ==="
-        ls -la src/tests.zig src/image_feature.c src/image_feature.h src/stb_image.h 2>&1
-
-    - name: Compile check (zig build)
-      run: |
-        echo "=== zig build ==="
-        zig build 2>&1 | tail -20
-
-    - name: Compile check (zig test --no-run)
-      run: |
-        echo "=== zig test compile check ==="
-        zig test src/tests.zig src/image_feature.c -ODebug --library c --no-run 2>&1 | tail -30
+    - name: Build project
+      run: zig build 2>&1
 
     - name: Run tests
       run: |
-        echo "=== Running tests ==="
-        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
-        TEST_EXIT=${PIPESTATUS[0]}
-        echo "EXIT CODE: $TEST_EXIT"
-        if [ $TEST_EXIT -ne 0 ]; then
-          echo "=== LAST 50 LINES ==="
-          tail -50 /tmp/test_output.txt
-          exit $TEST_EXIT
-        fi
+        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
