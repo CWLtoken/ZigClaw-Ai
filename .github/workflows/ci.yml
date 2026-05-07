@@ -30,6 +30,19 @@ jobs:
     - name: Build project
       run: zig build 2>&1
 
-    - name: Run tests
+    - name: Run tests with verbose output
       run: |
-        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
+        echo "=== Running tests with verbose output ==="
+        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
+        TEST_EXIT=${PIPESTATUS[0]}
+        echo ""
+        echo "=== EXIT CODE: $TEST_EXIT ==="
+        if [ $TEST_EXIT -ne 0 ]; then
+          echo ""
+          echo "=== SEARCHING FOR ERRORS ==="
+          grep -n -E "error|Error|FAIL|fail|panic|PANIC|SIGSEGV|SIGABRT|segfault|assertion|Assertion" /tmp/test_output.txt | head -30
+          echo ""
+          echo "=== LAST 100 LINES ==="
+          tail -100 /tmp/test_output.txt
+          exit $TEST_EXIT
+        fi
