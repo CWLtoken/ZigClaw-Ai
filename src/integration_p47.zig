@@ -15,9 +15,9 @@ const middleware = @import("entry/middleware.zig");
 test "P47 Integration: 请求ID连续性" {
     context.resetRequestCounter();
     
-    const ctx1 = context.RequestContext.init("POST", "/v1/infer");
-    const ctx2 = context.RequestContext.init("GET", "/health");
-    const ctx3 = context.RequestContext.init("POST", "/v1/infer");
+    const ctx1 = context.RequestContext.init("POST", "/v1/infer", 0);
+    const ctx2 = context.RequestContext.init("GET", "/health", 0);
+    const ctx3 = context.RequestContext.init("POST", "/v1/infer", 0);
     
     debug.assert(ctx1.id == 1);
     debug.assert(ctx2.id == 2);
@@ -60,7 +60,7 @@ test "P47 Integration: 无效Token拒绝" {
 
 // 集成测试4：上下文注入到请求处理（模拟）
 test "P47 Integration: 上下文注入" {
-    const ctx = context.RequestContext.init("POST", "/v1/infer");
+    const ctx = context.RequestContext.init("POST", "/v1/infer", 0);
     // 检查ID是否递增（依赖全局状态）
     debug.assert(ctx.id >= 1);
     debug.print("P47集成测试：上下文注入通过，ID={d}\n", .{ctx.id});

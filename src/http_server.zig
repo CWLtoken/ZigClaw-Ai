@@ -216,7 +216,12 @@ pub const HttpServer = struct {
         std.debug.print("请求: {s} {s}\n", .{req.method, req.path});
 
         // 生成请求上下文（原子ID，零分配）
-        var ctx = context.RequestContext.init(req.method, req.path);
+        // 从 X-Tenant-ID 头部提取租户 ID（v6.1.0）
+        var tenant_id: u64 = 0;
+        if (req.headers.get("X-Tenant-ID")) |tid_str| {
+            tenant_id = std.fmt.parseInt(u64, tid_str, 10) catch 0;
+        }
+        var ctx = context.RequestContext.init(req.method, req.path, tenant_id);
         std.debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
         
         // P50: 日志相关变量

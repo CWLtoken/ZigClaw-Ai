@@ -15,13 +15,14 @@ var global_request_id: u64 = 0;
 /// 请求上下文（贯穿全链路）
 pub const RequestContext = struct {
     id: u64,                    // 唯一请求ID
+    tenant_id: u64,             // 新增：租户标识 (v6.1.0)
     timestamp_ms: i64,          // 请求到达时间戳
     method: []const u8,         // HTTP方法（切片引用，不拷贝）
     path: []const u8,           // 请求路径（切片引用）
     auth_token_hash: ?u64,      // Authorization token哈希（可选）
     
     /// 生成新的请求上下文（自动分配唯一ID）
-    pub fn init(method: []const u8, path: []const u8) RequestContext {
+    pub fn init(method: []const u8, path: []const u8, tenant_id: u64) RequestContext {
         // 原子递增，返回新值（旧值+1）
         const old_id = @atomicRmw(u64, &global_request_id, .Add, 1, .seq_cst);
         const id = old_id + 1;
@@ -37,6 +38,7 @@ pub const RequestContext = struct {
         
         return .{
             .id = id,
+            .tenant_id = tenant_id,
             .timestamp_ms = timestamp_ms,
             .method = method,
             .path = path,
@@ -88,8 +90,8 @@ const mem = std.mem;
 test "P47: RequestContext 初始化和ID唯一性" {
     resetRequestCounter();
     
-    const ctx1 = RequestContext.init("POST", "/v1/infer");
-    const ctx2 = RequestContext.init("GET", "/health");
+    const ctx1 = RequestContext.init("POST", "/v1/infer", 0);
+    const ctx2 = RequestContext.init("GET", "/health", 0);
     
     std_debug.assert(ctx1.id == 1);
     std_debug.assert(ctx2.id == 2);
@@ -100,7 +102,7 @@ test "P47: RequestContext 初始化和ID唯一性" {
 test "P47: RequestContext 格式化ID" {
     resetRequestCounter();
     
-    const ctx = RequestContext.init("POST", "/v1/infer");
+    const ctx = RequestContext.init("POST", "/v1/infer", 0);
     var buf: [32]u8 = undefined;
     const len = ctx.formatId(&buf);
     
@@ -113,7 +115,7 @@ test "P47: RequestContext 格式化ID" {
 test "P47: RequestContext 鉴权Token设置" {
     resetRequestCounter();
     
-    var ctx = RequestContext.init("POST", "/v1/infer");
+    var ctx = RequestContext.init("POST", "/v1/infer", 0);
     std_debug.assert(ctx.auth_token_hash == null);
     
     ctx.setAuthToken(12345);
@@ -124,9 +126,9 @@ test "P47: RequestContext 鉴权Token设置" {
 test "P47: 全局计数器递增" {
     resetRequestCounter();
     
-    _ = RequestContext.init("GET", "/health");
-    _ = RequestContext.init("GET", "/health");
-    _ = RequestContext.init("GET", "/health");
+    _ = RequestContext.init("GET", "/health", 0);
+    _ = RequestContext.init("GET", "/health", 0);
+    _ = RequestContext.init("GET", "/health", 0);
     
     const count = getRequestCount();
     std_debug.assert(count == 3);

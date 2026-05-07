@@ -136,6 +136,12 @@ comptime {
     _ = integration_p50;
     // P51 集成测试（多实例部署验证）
     _ = p51;
+    // P52 集成测试（路由增强）
+    const integration_p52 = @import("integration_p52.zig");
+    _ = integration_p52;
+    // P53 集成测试（多租户上下文）
+    const integration_p53 = @import("integration_p53.zig");
+    _ = integration_p53;
 
     // v3.0 blueprint references (ensure these files compile)
     _ = @import("interface.zig");
