@@ -34,3 +34,10 @@ jobs:
       run: |
         zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
         exit ${PIPESTATUS[0]}
+
+    - name: Upload test log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-log-${{ github.event_name }}-${{ github.run_id }}
+        path: /tmp/test_output.txt
