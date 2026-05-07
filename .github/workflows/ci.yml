@@ -14,6 +14,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     - name: Install Zig 0.16.0
       run: |
@@ -25,10 +27,25 @@ jobs:
         /tmp/zig/zig version
         echo "/tmp/zig" >> $GITHUB_PATH
 
-    - name: Verify Zig
+    - name: Verify environment
       run: |
-        which zig
         zig version
+        uname -a
+        echo "=== Git log ==="
+        git log --oneline -5
+        echo "=== Git status ==="
+        git status --short
+        echo "=== Test source files ==="
+        ls -la src/tests.zig src/image_feature.c src/image_feature.h src/stb_image.h
 
-    - name: Run tests
-      run: zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1
+    - name: Run tests (with full output)
+      run: |
+        zig test src/tests.zig src/image_feature.c -ODebug --library c 2>&1 | tee /tmp/test_output.txt
+        TEST_EXIT=${PIPESTATUS[0]}
+        echo ""
+        echo "=== TEST EXIT CODE: $TEST_EXIT ==="
+        if [ $TEST_EXIT -ne 0 ]; then
+          echo "=== LAST 80 LINES ==="
+          tail -80 /tmp/test_output.txt
+          exit $TEST_EXIT
+        fi
