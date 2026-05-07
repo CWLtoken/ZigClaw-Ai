@@ -18,7 +18,7 @@ jobs:
       run: |
         echo "=== Downloading Zig 0.16.0 ==="
         curl -fL --retry 3 --retry-delay 2 \
-          https://ziglang.org/download/0.16.0/zig-linux-x86_64-0.16.0.tar.xz \
+          https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
           -o /tmp/zig.tar.xz
 
         echo "=== Verifying download ==="
