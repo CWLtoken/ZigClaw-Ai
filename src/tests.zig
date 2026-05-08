@@ -154,7 +154,7 @@ comptime {
     // P57 集成测试（V5 存储外置适配 — FileStore）
     const integration_p57 = @import("integration_p57.zig");
     _ = integration_p57;
-    // P58 集成测试（契约层强化 — 接口一致性）
+    // P58 集成测试（契约层强化 — 接口一致性 + 显式错误处理）
     const integration_p58 = @import("integration_p58.zig");
     _ = integration_p58;
 

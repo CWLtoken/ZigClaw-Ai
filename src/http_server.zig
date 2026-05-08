@@ -297,7 +297,12 @@ pub const HttpServer = struct {
             // P48-3: 返回 Prometheus 格式指标
             status_code = 200;
             var metrics_buf: [512]u8 = undefined;
-            const len = metrics_mod.formatMetrics(&metrics_buf);
+            const len = metrics_mod.formatMetrics(&metrics_buf) catch {
+                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                io_uring.Syscall.close(@intCast(conn_fd));
+                self.metrics.dec_connections();
+                continue;
+            };
             const response = std.fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
                 "Content-Type: text/plain; version=0.0.4\r\n" ++
                 "Content-Length: {d}\r\n" ++

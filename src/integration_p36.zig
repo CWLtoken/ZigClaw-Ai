@@ -46,13 +46,13 @@ test "P36: 文本 vs 图像模态路径验证" {
 
     // 验证文本走直通路径（不调用 extract）
     var seq_text = token.TokenSequence.init();
-    try orch.orchestrate("测试文本", .Text, &seq_text);
+    _ = try orch.orchestrate("测试文本", .Text, &seq_text);
     try testing.expect(seq_text.len == 1);
     try testing.expect(seq_text.get(0).?.tpe == .Text);
 
     // 验证图像路径（如果提取失败，跳过）
     var seq_img = token.TokenSequence.init();
-    orch.orchestrate("mock_image", .Image, &seq_img) catch |err| {
+    _ = orch.orchestrate("mock_image", .Image, &seq_img) catch |err| {
         std.debug.print("图像编排失败（预期，因为mock数据）: {}\n", .{err});
         // 跳过后续验证
         return;
