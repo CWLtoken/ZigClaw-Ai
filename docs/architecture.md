@@ -190,7 +190,39 @@ pub const RouteTable = struct {
 
 ---
 
-**架构版本**：v5.6-five-layer  
-**提交哈希**：46daba3  
-**测试状态**：86/86 全绿 ✅  
+## 🔄 多副本部署边界（v6.5.0）
+
+> **来源**：DRD-061 架构师审计 — "关键瓶颈在无状态化与多副本边界"
+
+### 进程内状态清单
+
+| 状态 | 位置 | 重启后可恢复 | 多副本共享 | 外置方案 |
+|------|------|-------------|-----------|----------|
+| HeatPool 热度值 | `heat_pool.zig` | ✅ ssd_persist 持久化 | ❌ 进程本地 | FileStore → Redis |
+| StreamWindow 元数据 | `storage.zig` | ❌ 重建 | ❌ 进程本地 | 无 |
+| BodyBufferPool 数据 | `storage.zig` | ❌ 重建 | ❌ 进程本地 | 无 |
+| 子脑注册表 | `orchestrator.zig` | ❌ 静态注册 | ⚠️ 各副本独立 | 配置中心 |
+| HTTP ServerMetrics | `http_server.zig` | ❌ 归零 | ❌ 进程本地 | Prometheus 聚合 |
+| IBus LayerMetrics | `ibus.zig` | ❌ 归零 | ❌ 进程本地 | 独立端点暴露 |
+
+### 无状态化边界
+
+- **当前架构为单副本设计**。所有运行时状态（热度池除外）均在进程内存中，重启即丢失。
+- **多副本部署时**：每个副本独立维护自己的 HeatPool、StreamWindow、Metrics。不存在共享内存或分布式锁。
+- **外置存储路径**：`file_store.zig` 提供了文件级持久化基础。下一步可替换为 Redis Store，实现跨副本热度池共享。
+- **推荐部署模式**：无状态前端（多副本）+ 有状态存储外置（Redis）。当前版本不支持，需 StorageInterface 实现升级。
+
+### 契约层（v6.5.0 新增）
+
+编译期契约验证确保各层接口一致性：
+
+| 契约 | 验证位置 | 验证内容 |
+|------|----------|----------|
+| StorageInterface | tests.zig comptime | FileStore.vtable.get/set 为函数指针 |
+| OrchestratorInterface | tests.zig comptime | Orchestrator 有 orchestrate 声明 |
+| ExecutorInterface | tests.zig comptime | Reactor 有 submit/poll，Ring 有 deinit |
+
+**架构版本**：v6.5.0-lts
+**提交哈希**：待最终提交
+**测试状态**：138/138 全绿 ✅
 **最后更新**：2026-05-06

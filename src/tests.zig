@@ -154,6 +154,9 @@ comptime {
     // P57 集成测试（V5 存储外置适配 — FileStore）
     const integration_p57 = @import("integration_p57.zig");
     _ = integration_p57;
+    // P58 集成测试（契约层强化 — 接口一致性）
+    const integration_p58 = @import("integration_p58.zig");
+    _ = integration_p58;
 
     // v3.0 blueprint references (ensure these files compile)
     _ = @import("interface.zig");
@@ -161,4 +164,33 @@ comptime {
     // DRD-059: V4/V5 新模块
     _ = @import("feedback_engine.zig");
     _ = @import("file_store.zig");
+
+    // ========================================================================
+    // 编译期契约验证（DRD-061: 契约层强化）
+    // 验证各层实现了 interface.zig 中定义的契约
+    // ========================================================================
+    const _interface = @import("interface.zig");
+    const _file_store = @import("file_store.zig");
+    const _orchestrator = @import("orchestrator.zig");
+    const _reactor = @import("reactor.zig");
+    const _io_uring = @import("io_uring.zig");
+
+    // StorageInterface: FileStore 的 VTable 有 get/set
+    const vs = _file_store.vtable;
+    if (@typeInfo(@TypeOf(vs.get)) != .pointer) @compileError("StorageInterface: vtable.get must be a pointer");
+    if (@typeInfo(@TypeOf(vs.set)) != .pointer) @compileError("StorageInterface: vtable.set must be a pointer");
+
+    // OrchestratorInterface: Orchestrator 有 orchestrate 方法
+    if (!@hasDecl(_orchestrator.Orchestrator, "orchestrate"))
+        @compileError("OrchestratorInterface: missing 'orchestrate' on Orchestrator");
+
+    // ExecutorInterface: Reactor 有 submit/poll, io_uring.Ring 有 deinit(close)
+    if (!@hasDecl(_reactor.Reactor, "submit"))
+        @compileError("ExecutorInterface: missing 'submit' on Reactor");
+    if (!@hasDecl(_reactor.Reactor, "poll"))
+        @compileError("ExecutorInterface: missing 'poll' on Reactor");
+    if (!@hasDecl(_io_uring.Ring, "deinit"))
+        @compileError("ExecutorInterface: missing 'deinit' (close) on Ring");
+
+    _ = _interface;
 }

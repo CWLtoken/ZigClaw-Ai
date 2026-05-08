@@ -289,7 +289,8 @@ pub const Syscall = struct {
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
             return SyscallError.SubmitFailed;
         }
-        return @truncate(rc);
+        // 安全转换：io_uring_enter 成功时返回提交的 CQE 数量，不会溢出 u32
+        return @as(u32, @intCast(rc));
     }
 
     pub fn close(fd: u32) void {

@@ -432,17 +432,20 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
             return;
         };
     } else {
-        // 简单模式
+        // 简单模式（栈缓冲区，零堆分配）
         const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
-        const response = try std.fmt.allocPrint(std.heap.page_allocator,
+        var resp_buf: [512]u8 = undefined;
+        const response = std.fmt.bufPrint(&resp_buf,
             "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: application/json\r\n" ++
             "Content-Length: {d}\r\n" ++
             "Connection: close\r\n" ++
             "\r\n{s}",
-            .{ body.len, body }
-        );
-        defer std.heap.page_allocator.free(response);
+            .{body.len, body}
+        ) catch {
+            sendErrorResponse(conn_fd, 500, "Internal Server Error") catch {};
+            return;
+        };
 
         _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
             std.debug.print("发送健康响应失败: {}\n", .{err});
@@ -455,17 +458,29 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
 
 // 推理功能已移至 http_protocol.zig（阶段23B 封板）
 // 当前 /infer 路径在 run() 中直接返回 503 Service Unavailable
-/// 发送错误响应
+/// 发送错误响应（栈缓冲区，零堆分配）
 fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void {
-    const response = try std.fmt.allocPrint(std.heap.page_allocator,
+    var buf: [512]u8 = undefined;
+    const response = std.fmt.bufPrint(&buf,
         "HTTP/1.1 {d} {s}\r\n" ++
         "Content-Type: text/plain\r\n" ++
         "Content-Length: {d}\r\n" ++
         "Connection: close\r\n" ++
         "\r\n{s}",
         .{status_code, message, message.len, message}
-    );
-    defer std.heap.page_allocator.free(response);
+    ) catch {
+        // 缓冲区不足，截断消息
+        const truncated = message[0..@min(message.len, 256)];
+        const fallback = std.fmt.bufPrint(&buf,
+            "HTTP/1.1 {d} {s}\r\n" ++
+            "Content-Type: text/plain\r\n" ++
+            "Connection: close\r\n" ++
+            "\r\n{s}",
+            .{status_code, truncated, truncated.len, truncated}
+        ) catch return;
+        _ = try io_uring.Syscall.send(conn_fd, fallback.ptr, fallback.len, 0);
+        return;
+    };
 
     _ = try io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0);
 }
