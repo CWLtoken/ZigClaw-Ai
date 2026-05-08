@@ -164,6 +164,8 @@ comptime {
     // DRD-059: V4/V5 新模块
     _ = @import("feedback_engine.zig");
     _ = @import("file_store.zig");
+    // P2-3: Comptime 路由（独立模块，验证后替换）
+    _ = @import("comptime_router.zig");
 
     // ========================================================================
     // 编译期契约验证（DRD-061: 契约层强化）

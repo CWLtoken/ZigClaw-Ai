@@ -23,10 +23,9 @@ pub const TokenSequence = token.TokenSequence;
 // ============================================================================
 
 pub const ExecutorInterface = struct {
-    /// VTable 类型：由实现者在编译期生成
     pub fn VTable(comptime Self: type) type {
         return struct {
-            submit: *const fn(self: Self, op: anytype) anyerror!void,
+            submit: *const fn(self: Self, op: Op) anyerror!void,
             poll:   *const fn(self: Self, events: []Event) anyerror!void,
             close:  *const fn(self: Self) void,
         };
