@@ -266,18 +266,23 @@ const std = @import("std");
 | P2-1: 缓存行对齐（伪共享消除） | metrics.zig（AlignedAtomicU64）| ✅ |
 | P2-2: io_uring 批量提交 | reactor.zig（flush + BATCH_THRESHOLD）| ✅ |
 | P2-3: Comptime 路由代码生成 | comptime_router.zig（独立模块）| ✅ |
-| P2-4: 二进制日志/指标直写 | metrics.zig（writeBinaryMetrics）| ⏳ v4.0 |
+|| P2-4: 二进制日志/指标直写 | metrics.zig（writeBinaryMetrics）| ⏳ v4.0 | 冻结（v3.0 不上） |
 
 ### 后续计划（v3.1+ 维护版本）
 
-| 任务 | 所属层 | 说明 | 优先级 |
-|------|--------|------|--------|
-| Keep-Alive 连接池 | 执行层 | HTTP 连接复用 | 低 |
-| 真实图像/音频子脑 | 编排层 | 需要特征提取算法 | 中 |
-| TLS/HTTPS 推理接入 | 执行层 | Zig 0.17 std.crypto.tls 稳定后 | 中 |
-| Redis Store | 存储层 | FileStore 的下一步，需要 Redis 依赖 | 中 |
-| 二进制指标/日志直写 | 观测层 | P2-4，需 sidecar 支持 | 高（v4.0）|
-| 多副本外置存储 | 存储层 | StorageInterface → Redis/Qdrant | 高（v4.0）|
+|| 任务 | 所属层 | 说明 | 优先级 |
+||------|--------|------|--------|
+|| Keep-Alive 连接池 | 执行层 | HTTP 连接复用 | 低 |
+|| 真实图像/音频子脑 | 编排层 | 需要特征提取算法 | 中 |
+|| TLS/HTTPS 推理接入 | 执行层 | Zig 0.17 std.crypto.tls 稳定后 | 中 |
+|| Redis Store | 存储层 | FileStore 的下一步，需要 Redis 依赖 | 中 |
+|| 二进制指标/日志直写 | 观测层 | P2-4，需 sidecar 支持 | 高（v4.0）|
+|| 多副本外置存储 | 存储层 | StorageInterface → Redis/Qdrant | 高（v4.0）|
+|| ComptimeRouter 拆分为框架 + 业务路由 | 路由层 | `*anyopaque` → 具体 `RouteContext`，消除类型安全丢失 | **高（v3.1）** |
+|| Reactor 延迟提交军规注释 | 执行层 | 在结构体顶部写死 flush 调用位置，防止被改乱 | **高（v3.1）** |
+|| P2 架构文档归档 | 文档 | 在 docs/ 中固化缓存行对齐 + io_uring 延迟提交军规 | 高（v3.1）|
+
+> **v3.1 优先级说明**：前三项（`ComptimeRouter` 拆分、`Reactor` 军规注释、架构文档）直接来自 [架构师审查报告](https://github.com/CWLtoken/ZigClaw-AI/blob/agent/大段文字.md)，属于 P0 架构契约级改进，建议在 v3.1 首批处理。
 
 ---
 
