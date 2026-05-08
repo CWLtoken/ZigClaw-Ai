@@ -142,6 +142,12 @@ comptime {
     // P53 集成测试（多租户上下文）
     const integration_p53 = @import("integration_p53.zig");
     _ = integration_p53;
+    // P54 集成测试（V2 向量索引增强 — IVF+PQ）
+    const integration_p54 = @import("integration_p54.zig");
+    _ = integration_p54;
+    // P55 集成测试（V3 IBus 内省总线）
+    const integration_p55 = @import("integration_p55.zig");
+    _ = integration_p55;
 
     // v3.0 blueprint references (ensure these files compile)
     _ = @import("interface.zig");

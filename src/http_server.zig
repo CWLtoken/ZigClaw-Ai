@@ -7,6 +7,7 @@ const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
 const http_log = @import("http_log.zig");
+const ibus = @import("ibus.zig");
 const c = @cImport({
     @cInclude("time.h");
 });
@@ -267,6 +268,31 @@ pub const HttpServer = struct {
             
             // P49-2: 记录推理延迟到直方图
             metrics_mod.observeInferLatency(latency_ms);
+        } else if (mem.eql(u8, req.path, "/ibus")) {
+            // DRD-058: IBus 内省总线端点
+            var ibus_buf: [2048]u8 = undefined;
+            const ibus_len = ibus.formatBusStatus(&ibus_buf);
+            const ibus_body = ibus_buf[0..ibus_len];
+
+            var hdr_buf: [256]u8 = undefined;
+            const header = std.fmt.bufPrint(&hdr_buf,
+                "HTTP/1.1 200 OK\r\n" ++
+                "Content-Type: application/json\r\n" ++
+                "Content-Length: {d}\r\n" ++
+                "Connection: close\r\n" ++
+                "\r\n",
+                .{ibus_len}
+            ) catch {
+                sendErrorResponse(conn_fd, 500, "Internal Server Error") catch {};
+                io_uring.Syscall.close(@intCast(conn_fd));
+                self.metrics.dec_connections();
+                self.metrics.inc_errors();
+                continue;
+            };
+
+            _ = io_uring.Syscall.send(conn_fd, header.ptr, header.len, 0) catch {};
+            _ = io_uring.Syscall.send(conn_fd, ibus_body.ptr, ibus_body.len, 0) catch {};
+            status_code = 200;
         } else if (mem.eql(u8, req.path, "/metrics")) {
             // P48-3: 返回 Prometheus 格式指标
             status_code = 200;
