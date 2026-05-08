@@ -75,3 +75,35 @@ pub const OrchestratorInterface = struct {
         };
     }
 };
+
+// ============================================================================
+// 编译期契约验证模板
+// 各层在公开头末尾通过 @hasDecl 验证其实现了对应契约
+// 用法：在层文件末尾添加 comptime { _ = ContractVerifier.checkStorage(MyImpl); }
+// ============================================================================
+
+pub const ContractVerifier = struct {
+    /// 验证类型 T 实现了 StorageInterface 契约（get + set）
+    pub fn checkStorage(comptime T: type) void {
+        comptime {
+            if (!@hasDecl(T, "get")) @compileError("StorageInterface: missing 'get' on " ++ @typeName(T));
+            if (!@hasDecl(T, "set")) @compileError("StorageInterface: missing 'set' on " ++ @typeName(T));
+        }
+    }
+
+    /// 验证类型 T 实现了 ExecutorInterface 契约（submit + poll + close）
+    pub fn checkExecutor(comptime T: type) void {
+        comptime {
+            if (!@hasDecl(T, "submit")) @compileError("ExecutorInterface: missing 'submit' on " ++ @typeName(T));
+            if (!@hasDecl(T, "poll")) @compileError("ExecutorInterface: missing 'poll' on " ++ @typeName(T));
+            if (!@hasDecl(T, "close")) @compileError("ExecutorInterface: missing 'close' on " ++ @typeName(T));
+        }
+    }
+
+    /// 验证类型 T 实现了 OrchestratorInterface 契约（orchestrate）
+    pub fn checkOrchestrator(comptime T: type) void {
+        comptime {
+            if (!@hasDecl(T, "orchestrate")) @compileError("OrchestratorInterface: missing 'orchestrate' on " ++ @typeName(T));
+        }
+    }
+};
