@@ -4,15 +4,43 @@
 
 const std = @import("std");
 
-// 核心指标（静态原子变量）
-// WARNING: single-thread only; use atomics for multi-thread
-pub var http_requests_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
-// WARNING: single-thread only; use atomics for multi-thread
-pub var auth_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
-// WARNING: single-thread only; use atomics for multi-thread
-pub var infer_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
-// WARNING: single-thread only; use atomics for multi-thread
-pub var active_connections: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+// ============================================================================
+// 缓存行对齐的原子变量包装（P2-1：伪共享消除）
+// 每个原子变量独占 64 字节缓存行，防止多核/多线程下的伪共享
+// ============================================================================
+const CACHE_LINE = 64;
+
+/// 缓存行对齐的原子 u64：强制独占一个缓存行
+pub const AlignedAtomicU64 = struct {
+    value: std.atomic.Value(u64) align(CACHE_LINE),
+    _pad: [CACHE_LINE - @sizeOf(std.atomic.Value(u64))]u8 = undefined,
+
+    pub fn init(v: u64) AlignedAtomicU64 {
+        return .{ .value = std.atomic.Value(u64).init(v) };
+    }
+
+    pub fn load(self: *const AlignedAtomicU64, comptime order: std.builtin.AtomicOrder) u64 {
+        return self.value.load(order);
+    }
+
+    pub fn store(self: *AlignedAtomicU64, v: u64, comptime order: std.builtin.AtomicOrder) void {
+        self.value.store(v, order);
+    }
+
+    pub fn fetchAdd(self: *AlignedAtomicU64, v: u64, comptime order: std.builtin.AtomicOrder) u64 {
+        return self.value.fetchAdd(v, order);
+    }
+
+    pub fn fetchSub(self: *AlignedAtomicU64, v: u64, comptime order: std.builtin.AtomicOrder) u64 {
+        return self.value.fetchSub(v, order);
+    }
+};
+
+// 核心指标（缓存行对齐的原子变量）
+pub var http_requests_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
+pub var auth_failures_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
+pub var infer_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
+pub var active_connections: AlignedAtomicU64 = AlignedAtomicU64.init(0);
 
 // P49：推理延迟直方图（分桶，单位 ms）
 // 分桶边界：10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, +Inf
@@ -49,10 +77,10 @@ pub fn observeInferLatency(latency_ms: f64) void {
     _ = infer_latency_buckets[NUM_BUCKETS - 1].fetchAdd(1, .monotonic);
 }
 
-// P49：io_uring 操作计数
-pub var uring_accept_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
-pub var uring_read_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
-pub var uring_write_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+// P49：io_uring 操作计数（缓存行对齐）
+pub var uring_accept_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
+pub var uring_read_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
+pub var uring_write_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
 
 pub fn incrUringAccept() void {
     _ = uring_accept_total.fetchAdd(1, .monotonic);

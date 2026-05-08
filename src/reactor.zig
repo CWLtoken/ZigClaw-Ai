@@ -14,19 +14,33 @@ pub const Event = union(enum) {
 
 pub const Reactor = struct {
     ring: io_uring.Ring,
+    pending_sqe_count: u32 = 0,
+
+    /// 批量提交阈值：累积到这么多 SQE 时自动 submit
+    const BATCH_THRESHOLD: u32 = 8;
 
     pub fn init(ring: io_uring.Ring) Reactor {
-        return .{ .ring = ring };
+        return .{ .ring = ring, .pending_sqe_count = 0 };
     }
 
-    // ZC-3-02: 提交 SQ 给内核，等待 CQ 完成
+    /// 延迟提交：只在需要时将 SQE 刷出到内核
+    /// 调用方在以下情况必须调用：
+    ///   1. 进入 io_uring_wait_cqe / poll 前
+    ///   2. accumulated SQE 达到 BATCH_THRESHOLD
+    pub fn flush(self: *Reactor) io_uring.SyscallError!void {
+        if (self.pending_sqe_count > 0) {
+            _ = try io_uring.Syscall.enter(self.ring.fd, self.pending_sqe_count, 0, 0);
+            self.pending_sqe_count = 0;
+        }
+    }
+
+    /// 提交 SQ 给内核，等待 CQ 完成（兼容旧接口）
     pub fn submit(self: *Reactor, to_submit: u32, min_complete: u32) io_uring.SyscallError!u32 {
         return io_uring.Syscall.enter(self.ring.fd, to_submit, min_complete, 0);
     }
 
-    /// 向 SQ 提交一个 RECV 请求（通过 ReadV + iovec 实现）
-    /// 注意：iovec 和 io_req 必须在调用者栈帧上，确保 submit() 调用 enter() 时仍然存活
-    pub fn prepare_recv(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) void {
+    /// 向 SQ 提交一个 RECV 请求（延迟提交策略）
+    pub fn prepare_recv(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         const idx = sq_tail & self.ring.sq_ring_mask;
 
@@ -36,8 +50,8 @@ pub const Reactor = struct {
             .ioprio = 0,
             .fd = fd,
             .off = 0,
-            .addr = @intFromPtr(iovec),  // iovec 指针
-            .len = 1,                       // 1 个 iovec
+            .addr = @intFromPtr(iovec),
+            .len = 1,
             .__pad1 = 0,
             .user_data = @intFromPtr(io_req),
             .buf_index = 0,
@@ -48,11 +62,15 @@ pub const Reactor = struct {
         };
         self.ring.sq_array[idx] = idx;
         @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
+
+        self.pending_sqe_count += 1;
+        if (self.pending_sqe_count >= BATCH_THRESHOLD) {
+            try self.flush();
+        }
     }
 
-    /// 向 SQ 提交一个 SEND 请求（通过 WriteV + iovec 实现）
-    /// 注意：iovec 和 io_req 必须在调用者栈帧上，确保 submit() 调用 enter() 时仍然存活
-    pub fn prepare_send(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) void {
+    /// 向 SQ 提交一个 SEND 请求（延迟提交策略）
+    pub fn prepare_send(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         const idx = sq_tail & self.ring.sq_ring_mask;
 
@@ -62,8 +80,8 @@ pub const Reactor = struct {
             .ioprio = 0,
             .fd = fd,
             .off = 0,
-            .addr = @intFromPtr(iovec),  // iovec 指针
-            .len = 1,                       // 1 个 iovec
+            .addr = @intFromPtr(iovec),
+            .len = 1,
             .__pad1 = 0,
             .user_data = @intFromPtr(io_req),
             .buf_index = 0,
@@ -74,10 +92,18 @@ pub const Reactor = struct {
         };
         self.ring.sq_array[idx] = idx;
         @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
+
+        self.pending_sqe_count += 1;
+        if (self.pending_sqe_count >= BATCH_THRESHOLD) {
+            try self.flush();
+        }
     }
 
+    /// 从 CQ 获取完成事件（自动 flush 挂起的 SQE）
     pub fn poll(self: *Reactor) Event {
-        // real io_uring: application reads CQ only
+        // 进入 poll 前，先 flush 所有挂起的 SQE
+        self.flush() catch {};
+
         const cq_head = @atomicLoad(u32, self.ring.cq_head, .acquire);
         const cq_tail = @atomicLoad(u32, self.ring.cq_tail, .acquire);
 
@@ -86,10 +112,8 @@ pub const Reactor = struct {
         const idx = cq_head & self.ring.cq_ring_mask;
         const cqe = &self.ring.cqes[idx];
 
-        // advance CQ head, notify kernel this CQE is consumed
         @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
 
-        // ZC-2-04: decode user_data as *IoRequest (stage 3 architecture)
         const req = @as(*io_uring.IoRequest, @ptrFromInt(cqe.user_data));
         return Event{
             .IoComplete = .{

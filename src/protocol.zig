@@ -146,9 +146,13 @@ pub const Protocol = struct {
                                 .stream_id = self.active_stream_id,
                                 .buf_ptr = &self.header_recv_buf,
                             };
-                            self.reactor.prepare_recv(self.accepted_fd, &self.current_iovec, &self.current_io_req);
-                            _ = self.reactor.submit(1, 0) catch unreachable; // 非阻塞提交
-                            self.recv_in_progress = true;
+                            if (self.reactor.prepare_recv(self.accepted_fd, &self.current_iovec, &self.current_io_req)) |_| {
+                                _ = self.reactor.submit(1, 0) catch unreachable;
+                                self.recv_in_progress = true;
+                            } else |_| {
+                                self.state = .{ .Error = .{ .reason = "prepare_recv failed" } };
+                                return self.state;
+                            }
                         }
                     },
                     .IoComplete => |io| {
@@ -204,9 +208,13 @@ pub const Protocol = struct {
                                         .stream_id = self.active_stream_id,
                                         .buf_ptr = dest_buf,
                                     };
-                                    self.reactor.prepare_recv(self.accepted_fd, &self.current_iovec, &self.current_io_req);
-                                    _ = self.reactor.submit(1, 0) catch unreachable;
-                                    self.recv_in_progress = true;
+                                    if (self.reactor.prepare_recv(self.accepted_fd, &self.current_iovec, &self.current_io_req)) |_| {
+                                        _ = self.reactor.submit(1, 0) catch unreachable;
+                                        self.recv_in_progress = true;
+                                    } else |_| {
+                                        self.state = .{ .Error = .{ .reason = "prepare_recv failed" } };
+                                        return self.state;
+                                    }
                                 }
                             }
                         }
@@ -287,7 +295,7 @@ pub const Protocol = struct {
                         .stream_id = self.active_stream_id,
                         .buf_ptr = &self.send_buf,
                     };
-                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
+                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req) catch unreachable;
                     _ = self.reactor.submit(1, 0) catch unreachable;
 
                     // 进入 SendDone 状态（之后会立即转到 WaitRequest）
@@ -314,7 +322,7 @@ pub const Protocol = struct {
                         .stream_id = self.active_stream_id,
                         .buf_ptr = &self.send_buf,
                     };
-                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req);
+                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req) catch unreachable;
                     _ = self.reactor.submit(1, 0) catch unreachable;
 
                     // 清理状态（使用原子操作重置）
