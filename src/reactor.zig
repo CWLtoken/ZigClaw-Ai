@@ -19,6 +19,12 @@ pub const Reactor = struct {
     /// 批量提交阈值：累积到这么多 SQE 时自动 submit
     const BATCH_THRESHOLD: u32 = 8;
 
+    // ====== 军规：flush 调用位置 ======
+    // 1. prepare_recv / prepare_send 中 >= BATCH_THRESHOLD 时自动 flush
+    // 2. 进入 io_uring_wait_cqe / poll 前，必须 flush
+    // 3. 其它地方禁止直接调用 flush，除非有特殊性能调优理由
+    // ==================================
+
     pub fn init(ring: io_uring.Ring) Reactor {
         return .{ .ring = ring, .pending_sqe_count = 0 };
     }

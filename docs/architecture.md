@@ -222,7 +222,58 @@ pub const RouteTable = struct {
 | OrchestratorInterface | tests.zig comptime | Orchestrator 有 orchestrate 声明 |
 | ExecutorInterface | tests.zig comptime | Reactor 有 submit/poll，Ring 有 deinit |
 
-**架构版本**：v6.5.0-lts
+---
+
+## ⚡ P2 性能优化军规（v6.7.0）
+
+> **来源**：架构师终审 — "把 P2 优化从'实现细节'升级为'架构契约'"
+
+### 缓存行对齐军规
+
+**规则**：所有高频争用原子变量必须使用 `AlignedAtomicU64`，禁止裸 `std.atomic.Value(u64)`。
+
+**原因**：消除伪共享（False Sharing），保证多核线性扩展。
+
+**位置**：`metrics.zig` 中 `AlignedAtomicU64` 定义 + 所有全局原子变量声明。
+
+```zig
+pub const AlignedAtomicU64 = struct {
+    value: std.atomic.Value(u64) align(CACHE_LINE),
+    _pad: [CACHE_LINE - @sizeOf(std.atomic.Value(u64))]u8 = undefined,
+    // ...
+};
+```
+
+**检查点**：
+- `metrics.zig` 中所有全局原子变量必须是 `AlignedAtomicU64`
+- `ibus.zig` 中 `LayerMetrics` 结构体字段紧密排列（同结构体内伪共享风险低）
+
+### io_uring 延迟提交军规
+
+**规则**：Reactor 采用延迟提交策略，`BATCH_THRESHOLD=8`，`flush` 调用位置必须遵守：
+
+1. `prepare_recv` / `prepare_send` 中 `pending_sqe_count >= BATCH_THRESHOLD` 时自动 flush
+2. 进入 `poll` 前必须 flush
+3. 其它地方禁止直接调用 flush，除非有特殊性能调优理由
+
+**位置**：`reactor.zig` 中 `Reactor` 结构体顶部军规注释。
+
+**原因**：减少 `io_uring_submit` 系统调用次数，同时保证不饿死 CQ。
+
+### Comptime 路由军规
+
+**规则**：路由表配置在编译期完成，运行时零查表开销。
+
+**位置**：`comptime_router.zig`（通用框架）+ `entry/app_router.zig`（业务路由）。
+
+**检查点**：
+- `ComptimeRouter` 编译期检测重复 `op_code`
+- `dispatch` 函数用 `inline for` 展开
+- `RouteContext` 替代 `*anyopaque`，编译期类型安全
+
+---
+
+**架构版本**：v6.7.0-lts-final
 **提交哈希**：待最终提交
-**测试状态**：138/138 全绿 ✅
+**测试状态**：144/144 全绿 ✅（ReleaseSafe）
 **最后更新**：2026-05-06
