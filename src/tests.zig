@@ -148,8 +148,17 @@ comptime {
     // P55 集成测试（V3 IBus 内省总线）
     const integration_p55 = @import("integration_p55.zig");
     _ = integration_p55;
+    // P56 集成测试（V4 观测反馈学习 — SimpleLearner）
+    const integration_p56 = @import("integration_p56.zig");
+    _ = integration_p56;
+    // P57 集成测试（V5 存储外置适配 — FileStore）
+    const integration_p57 = @import("integration_p57.zig");
+    _ = integration_p57;
 
     // v3.0 blueprint references (ensure these files compile)
     _ = @import("interface.zig");
     _ = @import("feedback.zig");
+    // DRD-059: V4/V5 新模块
+    _ = @import("feedback_engine.zig");
+    _ = @import("file_store.zig");
 }
