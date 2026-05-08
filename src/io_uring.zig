@@ -289,7 +289,7 @@ pub const Syscall = struct {
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
             return SyscallError.SubmitFailed;
         }
-        return @intCast(rc);
+        return @truncate(rc);
     }
 
     pub fn close(fd: u32) void {
@@ -469,6 +469,7 @@ pub const Syscall = struct {
 };
 
 /// 调试用：最后一次 send 的返回值
+// DEBUG ONLY: remove before v3.0 production
 pub var last_send_rc: usize = 0;
 
 /// Linux struct sockaddr_in (16 bytes, C ABI compatible)

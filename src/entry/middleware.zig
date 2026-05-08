@@ -45,12 +45,57 @@ fn extractBearerToken(headers: []const u8) ?[]const u8 {
     return null;
 }
 
-/// 检查请求鉴权是否通过
-/// 返回 true 如果合法，false 如果非法或缺失
-pub fn checkAuth(headers: []const u8) bool {
-    const token = extractBearerToken(headers) orelse return false;
-    // 直接比较 Token 字符串（零拷贝）
-    return mem.eql(u8, token, VALID_TOKEN);
+/// 鉴权结果（v6.1.0 扩展）
+pub const AuthResult = struct {
+    allowed: bool,
+    tenant_id: u64,   // 从 X-Tenant-ID 头部提取，不存在则默认 0
+};
+
+/// 检查请求鉴权是否通过（v6.1.0 扩展版本）
+pub fn checkAuthWithTenant(headers: []const u8) AuthResult {
+    const token = extractBearerToken(headers) orelse return .{ .allowed = false, .tenant_id = 0 };
+    const allowed = mem.eql(u8, token, VALID_TOKEN);
+    // 提取 X-Tenant-ID
+    var tenant_id: u64 = 0;
+    if (extractHeader(headers, "X-Tenant-ID")) |tid_str| {
+        tenant_id = std.fmt.parseInt(u64, tid_str, 10) catch 0;
+    }
+    return .{ .allowed = allowed, .tenant_id = tenant_id };
+}
+
+/// 检查请求鉴权是否通过（兼容旧接口）
+pub fn checkAuth(headers: ?[]const u8) bool {
+    const h = headers orelse return false;
+    return checkAuthWithTenant(h).allowed;
+}
+
+/// 从 HTTP 头部中提取指定字段值（零拷贝）
+fn extractHeader(headers: []const u8, name: []const u8) ?[]const u8 {
+    var i: usize = 0;
+    const name_len = name.len;
+    while (i + name_len <= headers.len) {
+        if (mem.eql(u8, headers[i..i+name_len], name)) {
+            var pos = i + name_len;
+            // 跳过 ":"
+            while (pos < headers.len and headers[pos] != ':') {
+                pos += 1;
+            }
+            if (pos < headers.len) pos += 1;  // 跳过 ':'
+            // 跳过空白
+            while (pos < headers.len and (headers[pos] == ' ' or headers[pos] == '\t')) {
+                pos += 1;
+            }
+            var end: usize = pos;
+            while (end < headers.len and headers[end] != '\r' and headers[end] != '\n') {
+                end += 1;
+            }
+            if (end > pos) {
+                return headers[pos..end];
+            }
+        }
+        i += 1;
+    }
+    return null;
 }
 
 // 单元测试（P47）

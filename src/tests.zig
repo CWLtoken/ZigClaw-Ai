@@ -136,4 +136,29 @@ comptime {
     _ = integration_p50;
     // P51 集成测试（多实例部署验证）
     _ = p51;
+    // P52 集成测试（路由增强）
+    const integration_p52 = @import("integration_p52.zig");
+    _ = integration_p52;
+    // P53 集成测试（多租户上下文）
+    const integration_p53 = @import("integration_p53.zig");
+    _ = integration_p53;
+    // P54 集成测试（V2 向量索引增强 — IVF+PQ）
+    const integration_p54 = @import("integration_p54.zig");
+    _ = integration_p54;
+    // P55 集成测试（V3 IBus 内省总线）
+    const integration_p55 = @import("integration_p55.zig");
+    _ = integration_p55;
+    // P56 集成测试（V4 观测反馈学习 — SimpleLearner）
+    const integration_p56 = @import("integration_p56.zig");
+    _ = integration_p56;
+    // P57 集成测试（V5 存储外置适配 — FileStore）
+    const integration_p57 = @import("integration_p57.zig");
+    _ = integration_p57;
+
+    // v3.0 blueprint references (ensure these files compile)
+    _ = @import("interface.zig");
+    _ = @import("feedback.zig");
+    // DRD-059: V4/V5 新模块
+    _ = @import("feedback_engine.zig");
+    _ = @import("file_store.zig");
 }

@@ -98,7 +98,7 @@ pub const Protocol = struct {
         std.debug.print("[push_cqe] before: head={}, tail={}, user_data={}\n", .{ head, tail, user_data });
         
         const idx = tail & ring.cq_ring_mask;
-        ring.cqes[idx] = .{ .user_data = user_data, .res = @as(i32, @intCast(res)), .flags = 0 };
+        ring.cqes[idx] = .{ .user_data = user_data, .res = @bitCast(res), .flags = 0 };
         @atomicStore(u32, ring.cq_tail, tail + 1, .release);
         
         const new_tail = @atomicLoad(u32, ring.cq_tail, .acquire);

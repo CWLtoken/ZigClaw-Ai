@@ -5,9 +5,13 @@
 const std = @import("std");
 
 // 核心指标（静态原子变量）
+// WARNING: single-thread only; use atomics for multi-thread
 pub var http_requests_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+// WARNING: single-thread only; use atomics for multi-thread
 pub var auth_failures_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+// WARNING: single-thread only; use atomics for multi-thread
 pub var infer_total: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
+// WARNING: single-thread only; use atomics for multi-thread
 pub var active_connections: std.atomic.Value(u64) = std.atomic.Value(u64).init(0);
 
 // P49：推理延迟直方图（分桶，单位 ms）
@@ -16,8 +20,9 @@ pub const LATENCY_BUCKETS = [_]f64{ 10, 25, 50, 100, 250, 500, 1000, 2500, 5000,
 const NUM_BUCKETS = LATENCY_BUCKETS.len + 1; // +1 for +Inf bucket
 
 // 每个桶的计数器（静态数组，在 initLatencyBuckets 中初始化）
+// WARNING: single-thread only; buckets_initialized is not atomic
 pub var infer_latency_buckets: [NUM_BUCKETS]std.atomic.Value(u64) = undefined;
-var buckets_initialized: bool = false;
+var buckets_initialized: bool = false;  // WARNING: not atomic, single-thread only
 
 // 初始化桶计数器（在程序启动时调用一次）
 pub fn initLatencyBuckets() void {
