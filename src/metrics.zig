@@ -10,7 +10,8 @@ const std = @import("std");
 // ============================================================================
 const CACHE_LINE = 64;
 
-/// 缓存行对齐的原子 u64：强制独占一个缓存行
+/// 缓存行对齐的原子 u64：强制独占 64 字节缓存行，消除伪共享
+/// 每个原子变量单独对齐，防止多核/多线程下相邻变量共享缓存行导致性能下降
 pub const AlignedAtomicU64 = struct {
     value: std.atomic.Value(u64) align(CACHE_LINE),
     _pad: [CACHE_LINE - @sizeOf(std.atomic.Value(u64))]u8 = undefined,
