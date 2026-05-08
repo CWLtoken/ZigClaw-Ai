@@ -25,7 +25,7 @@ test "P49 Integration: 延迟分桶递增" {
     
     // 验证：通过 formatMetrics 输出检查桶计数
     var buf: [2048]u8 = undefined;
-    const len = metrics_mod.formatMetrics(&buf);
+    const len = metrics_mod.formatMetrics(&buf) catch unreachable;
     const output = buf[0..len];
     
     // 简单验证：输出包含直方图标识
@@ -38,7 +38,7 @@ test "P49 Integration: 延迟分桶递增" {
 // 集成测试2：/metrics 输出包含新指标
 test "P49 Integration: /metrics 输出包含新指标" {
     var buf: [2048]u8 = undefined;
-    const len = metrics_mod.formatMetrics(&buf);
+    const len = metrics_mod.formatMetrics(&buf) catch unreachable;
     const output = buf[0..len];
     
     // 验证包含 io_uring 指标
@@ -71,7 +71,7 @@ test "P49 Integration: 推理延迟边界测试" {
     metrics_mod.observeInferLatency(10001.0); // 应该落入 {le="+Inf"} 桶
     
     var buf: [2048]u8 = undefined;
-    const len = metrics_mod.formatMetrics(&buf);
+    const len = metrics_mod.formatMetrics(&buf) catch unreachable;
     const output = buf[0..len];
     
     debug.print("P49集成测试：延迟边界测试通过\n输出（前600字节）：\n{s}\n", .{output[0..@min(len, 600)]});

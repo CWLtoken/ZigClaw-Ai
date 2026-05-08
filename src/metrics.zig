@@ -100,11 +100,14 @@ pub fn decrActiveConnections() void {
 }
 
 // Prometheus 格式输出（写入给定缓冲区，返回写入字节数）
-// 调用方提供缓冲区（建议 1024 字节以上，因为新增指标）
-pub fn formatMetrics(buf: []u8) usize {
+/// 调用方提供缓冲区（建议 2048 字节以上）
+/// 缓冲区不足时返回 MetricsError.BufferTooSmall，而非 unreachable
+pub const MetricsError = error{BufferTooSmall};
+
+pub fn formatMetrics(buf: []u8) MetricsError!usize {
     // 确保桶已初始化
     if (!buckets_initialized) initLatencyBuckets();
-    
+
     const http = http_requests_total.load(.acquire);
     const auth = auth_failures_total.load(.acquire);
     const infer = infer_total.load(.acquire);
@@ -118,23 +121,23 @@ pub fn formatMetrics(buf: []u8) usize {
     // 构建延迟直方图的 bucket 行
     var bucket_lines: [1024]u8 = undefined;
     var bucket_len: usize = 0;
-    
+
     // 计算累积和
     var cumulative: u64 = 0;
     for (LATENCY_BUCKETS, 0..) |boundary, i| {
         const bucket_val = infer_latency_buckets[i].load(.acquire);
         cumulative += bucket_val;
-        const line = std.fmt.bufPrint(bucket_lines[bucket_len..], 
-            "zigclaw_infer_latency_ms_bucket{{le=\"{d}\"}} {d}\n", 
-            .{ boundary, cumulative }) catch unreachable;
+        const line = std.fmt.bufPrint(bucket_lines[bucket_len..],
+            "zigclaw_infer_latency_ms_bucket{{le=\"{d}\"}} {d}\n",
+            .{ boundary, cumulative }) catch return MetricsError.BufferTooSmall;
         bucket_len += line.len;
     }
     // +Inf 桶
     const inf_bucket = infer_latency_buckets[NUM_BUCKETS - 1].load(.acquire);
     cumulative += inf_bucket;
-    const inf_line = std.fmt.bufPrint(bucket_lines[bucket_len..], 
-        "zigclaw_infer_latency_ms_bucket{{le=\"+Inf\"}} {d}\n", 
-        .{cumulative}) catch unreachable;
+    const inf_line = std.fmt.bufPrint(bucket_lines[bucket_len..],
+        "zigclaw_infer_latency_ms_bucket{{le=\"+Inf\"}} {d}\n",
+        .{cumulative}) catch return MetricsError.BufferTooSmall;
     bucket_len += inf_line.len;
 
     const result = std.fmt.bufPrint(buf,
@@ -174,7 +177,12 @@ pub fn formatMetrics(buf: []u8) usize {
         \\# TYPE zigclaw_uring_cq_ring_used gauge
         \\zigclaw_uring_cq_ring_used {d}
         \\
-    , .{ http, auth, infer, active, bucket_lines[0..bucket_len], infer, accept_total, read_total, write_total, sq_used, cq_used }) catch unreachable;
+    , .{ http, auth, infer, active, bucket_lines[0..bucket_len], infer, accept_total, read_total, write_total, sq_used, cq_used }) catch return MetricsError.BufferTooSmall;
 
     return result.len;
+}
+
+/// 安全包装：格式化指标到缓冲区，不足时返回错误码而非 panic
+pub fn formatMetricsSafe(buf: []u8) ?usize {
+    return formatMetrics(buf) catch null;
 }

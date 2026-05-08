@@ -19,7 +19,7 @@ test "P31: infer_from_tokens + 编排层 + 推理层全链路 - 文本直通" {
 
     // 3. 通过编排器获得 Token 序列（文本直通）
     std.debug.print("\n🔄 P31: 编排器处理文本输入...\n", .{});
-    try orch.orchestrate(user_input, .Text, &seq);
+    _ = try orch.orchestrate(user_input, .Text, &seq);
     try testing.expectEqual(@as(u16, 1), seq.len);
 
     // 4. 验证 Token 正确性
@@ -51,7 +51,7 @@ test "P31: infer_from_tokens + 图像模态（模拟）" {
 
     // 3. 编排器处理图像（量化路径）
     std.debug.print("\n🔄 P31: 编排器处理图像输入（模拟）...\n", .{});
-    try orch.orchestrate(image_data, .Image, &seq);
+    _ = try orch.orchestrate(image_data, .Image, &seq);
     try testing.expectEqual(@as(u16, 1), seq.len);
 
     // 4. 验证 Token（应为 VectorQuantized 类型）

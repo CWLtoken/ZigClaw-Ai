@@ -11,6 +11,12 @@
 // 所有 VTable 函数指针均为编译期确定，无运行时间接调用开销。
 
 const std = @import("std");
+const sub_brain = @import("sub_brain.zig");
+const token = @import("token.zig");
+
+// 重新导出，方便引用
+pub const Modality = sub_brain.Modality;
+pub const TokenSequence = token.TokenSequence;
 
 // ============================================================================
 // 执行层契约（Execution Layer）
@@ -68,10 +74,16 @@ pub const StorageInterface = struct {
 // 编排层契约（Orchestration Layer）
 // ============================================================================
 
+/// 编排结果：调用方直接可见所有字段，无需猜测实现细节
+pub const OrchestrateResult = struct {
+    token_seq: *const TokenSequence,
+};
+
 pub const OrchestratorInterface = struct {
     pub fn VTable(comptime Self: type) type {
         return struct {
-            orchestrate: *const fn(self: Self, input: []const u8, modality: anytype) anyerror!anyopaque,
+            /// 显式枚举 + 具体返回类型，替代 anytype/anyopaque
+            orchestrate: *const fn(self: Self, input: []const u8, modality: Modality) anyerror!OrchestrateResult,
         };
     }
 };

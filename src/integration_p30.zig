@@ -16,7 +16,7 @@ test "Phase30: 编排层集成 - 文本直通 → 模拟推理" {
 
     // 3. 通过编排器获得 Token 序列（文本直通）
     std.debug.print("\n🔄 Phase30: 编排器处理文本输入...\n", .{});
-    try orch.orchestrate(user_input, .Text, &seq);
+    _ = try orch.orchestrate(user_input, .Text, &seq);
     try testing.expectEqual(@as(u16, 1), seq.len);
 
     // 4. 验证 Token 正确性
@@ -48,7 +48,7 @@ test "Phase30: 编排层集成 - 图像模态（模拟）" {
 
     // 3. 编排器处理图像（量化路径）
     std.debug.print("\n🔄 Phase30: 编排器处理图像输入（模拟）...\n", .{});
-    try orch.orchestrate(image_data, .Image, &seq);
+    _ = try orch.orchestrate(image_data, .Image, &seq);
     try testing.expectEqual(@as(u16, 1), seq.len);
 
     // 4. 验证 Token（应为 VectorQuantized 类型）
@@ -65,7 +65,7 @@ test "Phase30: 整体链路验证 - 文本直通 + 推理 + 响应" {
     const input = "Zig 0.16 有哪些新特性？";
     var seq = token.TokenSequence.init();
 
-    try orch.orchestrate(input, .Text, &seq);
+    _ = try orch.orchestrate(input, .Text, &seq);
     // 拼接 prompt（从 TokenSequence 提取所有文本）
     var full_prompt: [1024]u8 = undefined;
     var prompt_len: usize = 0;
