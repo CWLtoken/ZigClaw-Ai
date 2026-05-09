@@ -1,8 +1,8 @@
 // src/protocol.zig
 // 执行层 | Layer: Execution
 // ZigClaw V2.4 | 系统大脑 | DMA自省 | ALU溢出防御 | Phase5真实内存搬运
-const std = @import("std");
-const mem = std.mem;
+const mem = @import("std").mem;
+const std_debug = @import("std").debug;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const reactor = @import("reactor.zig");
@@ -41,7 +41,7 @@ pub const Protocol = struct {
 
     pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool, handler: router.HandlerFn) io_uring.SyscallError!Protocol {
         return .{
-            .reactor = reactor.Reactor.init(try io_uring.Ring.init()),
+            .reactor = reactor.Reactor.init(io_uring.Ring.init() catch |e| return e),
             .window = window,
             .body_pool = body_pool,
             .handler = handler,
@@ -95,14 +95,14 @@ pub const Protocol = struct {
         const ring = &self.reactor.ring;
         const head = @atomicLoad(u32, ring.cq_head, .acquire);
         const tail = @atomicLoad(u32, ring.cq_tail, .acquire);
-        std.debug.print("[push_cqe] before: head={}, tail={}, user_data={}\n", .{ head, tail, user_data });
+        std_debug.print("[push_cqe] before: head={}, tail={}, user_data={}\n", .{ head, tail, user_data });
         
         const idx = tail & ring.cq_ring_mask;
         ring.cqes[idx] = .{ .user_data = user_data, .res = @bitCast(res), .flags = 0 };
         @atomicStore(u32, ring.cq_tail, tail + 1, .release);
         
         const new_tail = @atomicLoad(u32, ring.cq_tail, .acquire);
-        std.debug.print("[push_cqe] after: head={}, tail={}\n", .{ head, new_tail });
+        std_debug.print("[push_cqe] after: head={}, tail={}\n", .{ head, new_tail });
     }
     
     // 测试辅助：调试 reactor.poll() 看到的状态（仅用于测试）
@@ -110,7 +110,7 @@ pub const Protocol = struct {
         const ring = &self.reactor.ring;
         const head = @atomicLoad(u32, ring.cq_head, .acquire);
         const tail = @atomicLoad(u32, ring.cq_tail, .acquire);
-        std.debug.print("[debug_poll] head={}, tail={}\n", .{ head, tail });
+        std_debug.print("[debug_poll] head={}, tail={}\n", .{ head, tail });
     }
     
     /// 测试辅助函数：显式重置 CQ 状态到一致状态
@@ -124,7 +124,7 @@ pub const Protocol = struct {
     // onResponseReady：异步业务完成回调（静态函数）
     // 由 async_handler 在业务完成后调用
     pub fn onResponseReady(ctx: *router.RequestContext) void {
-        const self = @as(*Protocol, @ptrCast(@alignCast(ctx.userdata.?)));
+        const self = if (ctx.userdata) |ud| @as(*Protocol, @ptrCast(@alignCast(ud))) else return;
         // 使用原子操作设置 response_ready，确保内存可见性
         @atomicStore(bool, &self.response_ready, true, .release);
     }
@@ -147,7 +147,7 @@ pub const Protocol = struct {
                                 .buf_ptr = &self.header_recv_buf,
                             };
                             if (self.reactor.prepare_recv(self.accepted_fd, &self.current_iovec, &self.current_io_req)) |_| {
-                                _ = self.reactor.submit(1, 0) catch unreachable;
+                                if (self.reactor.submit(1, 0)) |_| {} else |_| {}
                                 self.recv_in_progress = true;
                             } else |_| {
                                 self.state = .{ .Error = .{ .reason = "prepare_recv failed" } };
@@ -209,7 +209,7 @@ pub const Protocol = struct {
                                         .buf_ptr = dest_buf,
                                     };
                                     if (self.reactor.prepare_recv(self.accepted_fd, &self.current_iovec, &self.current_io_req)) |_| {
-                                        _ = self.reactor.submit(1, 0) catch unreachable;
+                                        if (self.reactor.submit(1, 0)) |_| {} else |_| {}
                                         self.recv_in_progress = true;
                                     } else |_| {
                                         self.state = .{ .Error = .{ .reason = "prepare_recv failed" } };
@@ -295,8 +295,8 @@ pub const Protocol = struct {
                         .stream_id = self.active_stream_id,
                         .buf_ptr = &self.send_buf,
                     };
-                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req) catch unreachable;
-                    _ = self.reactor.submit(1, 0) catch unreachable;
+                    if (self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req)) |_| {} else |_| {}
+                    if (self.reactor.submit(1, 0)) |_| {} else |_| {}
 
                     // 进入 SendDone 状态（之后会立即转到 WaitRequest）
                     self.state = .SendDone;
@@ -322,8 +322,8 @@ pub const Protocol = struct {
                         .stream_id = self.active_stream_id,
                         .buf_ptr = &self.send_buf,
                     };
-                    self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req) catch unreachable;
-                    _ = self.reactor.submit(1, 0) catch unreachable;
+                    if (self.reactor.prepare_send(self.accepted_fd, &self.current_iovec, &self.current_io_req)) |_| {} else |_| {}
+                    if (self.reactor.submit(1, 0)) |_| {} else |_| {}
 
                     // 清理状态（使用原子操作重置）
                     @atomicStore(bool, &self.response_ready, false, .release);
