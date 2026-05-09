@@ -8,8 +8,8 @@
 **ZigClaw-AI** 是一个基于 **Zig 0.16** 构建的高性能异步 AI 客服系统框架。采用 io_uring 底层、事件驱动架构和六层静态分层设计，严格遵守"**显性直白、扁平低代码、无依赖0**"三大军规。
 
 > **当前状态：v6.8.0-lts-final — v3.0 LTS 冻结**  \\
-> 测试状态：**144/144 全绿** ✅（ReleaseSafe）| 标签：`v6.8.0-lts-final`
-
+|> 测试状态：**144/144 全绿** ✅（ReleaseSafe）| 标签：`v6.8.0-lts-final`
+|
 ---
 
 ## 🎯 核心特性
@@ -24,8 +24,8 @@
 | **💾 文件存储后端** | FileStore 基于 io_uring.Syscall 文件 I/O，零堆分配 |
 | **⚡ 缓存行对齐** | AlignedAtomicU64 消除伪共享，多核性能无损 |
 | **🔀 Comptime 路由** | 编译期生成路由 dispatch，零运行时查表开销 |
-|| **🧪 144/144 全绿** | 覆盖六层架构全链路 + 集成测试 |
-
+| **🧪 144/144 全绿** | 覆盖六层架构全链路 + 集成测试 |
+|
 ---
 
 ## 🏗️ 架构总览（六层静态分层）
@@ -165,9 +165,9 @@ src/
 | `ibus: formatBusStatus JSON` | 5 层指标 JSON 输出 | 观测层 |
 | `feedback_engine: SQPOLL 建议` | ring_full > 10 触发规则 | 观测层 |
 | `file_store: save/load 一致性` | 热度池持久化往返 | 存储层 |
-|| `comptime_router: dispatch` | 编译期路由不崩溃 | 路由层 |
-|| `app_router: dispatch 不崩溃` | 框架+业务分离，RouteContext 类型安全 | 路由层 |
-|| `app_router: 未匹配路由不崩溃` | handleNotFound 兜底 | 路由层 |
+| `comptime_router: dispatch` | 编译期路由不崩溃 | 路由层 |
+| `app_router: dispatch 不崩溃` | 框架+业务分离，RouteContext 类型安全 | 路由层 |
+| `app_router: 未匹配路由不崩溃` | handleNotFound 兜底 | 路由层 |
 | `http_server: /health` | 健康检查 + verbose | 入口层 |
 | `http_server: /v1/infer` | 鉴权 + 推理 + 503 | 入口层 |
 | `http_server: /ibus` | 内省总线端点 | 入口层 |
@@ -175,7 +175,7 @@ src/
 | `context: X-Tenant-ID 解析` | 多租户上下文 | 入口层 |
 | `integration_p51: 多实例部署` | 两实例独立响应 | 入口层 |
 | `orchestrator: 文本直通` | orchestrate → OrchestrateResult | 编排层 |
-
+|
 ---
 
 ## 🚀 快速开始
@@ -221,7 +221,7 @@ const std = @import("std");
 | `reactor.zig` | std / storage / mem | mem.writeInt |
 | `protocol.zig` | — | try / catch / orelse / ? |
 | `server.zig` | Protocol / Reactor | 持有 Storage 指针 / std.Thread |
-
+|
 ### 第三诫：零第三方库
 全部使用 Zig 0.16 标准库，禁用任何第三方依赖。运行时 C 依赖仅限：
 - `libc`：`clock_gettime(CLOCK_MONOTONIC)`
@@ -249,9 +249,9 @@ const std = @import("std");
 | v6.4.0 | v6.4.0-v3-final | DRD-060 | v3.0 正式封板 | 136 |
 | v6.5.0 | v6.5.0-lts | DRD-061 | P0 安全修复 + P1 契约强化 + 多副本边界文档 | 138 |
 | v6.6.0 | v6.6.0-lts-final | DRD-061 | OrchestratorInterface 显式化 + metrics MetricsError + C依赖白名单 | 140 |
-|| **v6.7.0** | **v6.7.0-lts-final** | **P2** | **缓存行对齐 + io_uring 批量提交 + Comptime 路由 + ExecutorInterface 显式化** | **142** |
-|| **v6.8.0** | **v6.8.0-lts-final** | **P2-3 重构** | **ComptimeRouter 拆成框架+业务路由（RouteContext 类型安全）+ Reactor 军规注释 + AlignedAtomicU64 注释 + P2 架构文档** | **144** |
-
+| v6.7.0 | v6.7.0-lts-final | P2 | 缓存行对齐 + io_uring 批量提交 + Comptime 路由 + ExecutorInterface 显式化 | 142 |
+| v6.8.0 | v6.8.0-lts-final | P2-3 重构 | ComptimeRouter 拆成框架+业务路由（RouteContext 类型安全）+ Reactor 军规注释 + AlignedAtomicU64 注释 + P2 架构文档 | 144 |
+|
 ### v3.0 架构交付清单
 
 | 编号 | 名称 | 核心文件 | 状态 |
@@ -262,30 +262,30 @@ const std = @import("std");
 | V4 | 观测反馈学习 | feedback_engine.zig | ✅ |
 | V5 | 存储外置适配 | file_store.zig | ✅ |
 | V6 | 多租户上下文 | context.zig | ✅ |
-
+|
 ### P2 性能优化清单
 
 | 优化 | 核心文件 | 状态 |
 |------|----------|------|
 | P2-1: 缓存行对齐（伪共享消除） | metrics.zig（AlignedAtomicU64）| ✅ |
 | P2-2: io_uring 批量提交 | reactor.zig（flush + BATCH_THRESHOLD）| ✅ |
-|| P2-3: Comptime 路由代码生成 | comptime_router.zig（通用框架）+ entry/app_router.zig（业务路由）| ✅ 已拆分，RouteContext 类型安全 |
-|| P2-4: 二进制日志/指标直写 | metrics.zig（writeBinaryMetrics）| ⏳ v4.0 | 冻结（v3.0 不上） |
-
+| P2-3: Comptime 路由代码生成 | comptime_router.zig（通用框架）+ entry/app_router.zig（业务路由）| ✅ 已拆分，RouteContext 类型安全 |
+| P2-4: 二进制日志/指标直写 | metrics.zig（writeBinaryMetrics）| ⏳ v4.0（冻结，v3.0 不上） |
+|
 ### 后续计划（v3.1+ 维护版本）
 
-|| 任务 | 所属层 | 说明 | 优先级 |
-||------|--------|------|--------|
-|| Keep-Alive 连接池 | 执行层 | HTTP 连接复用 | 低 |
-|| 真实图像/音频子脑 | 编排层 | 需要特征提取算法 | 中 |
-|| TLS/HTTPS 推理接入 | 执行层 | Zig 0.17 std.crypto.tls 稳定后 | 中 |
-|| Redis Store | 存储层 | FileStore 的下一步，需要 Redis 依赖 | 中 |
-|| 二进制指标/日志直写 | 观测层 | P2-4，需 sidecar 支持 | 高（v4.0）|
-|| 多副本外置存储 | 存储层 | StorageInterface → Redis/Qdrant | 高（v4.0）|
-||| ComptimeRouter 拆分为框架 + 业务路由 | 路由层 | `*anyopaque` → 具体 `RouteContext`，消除类型安全丢失 | **✅ v6.8.0** |
-||| Reactor 延迟提交军规注释 | 执行层 | 在结构体顶部写死 flush 调用位置，防止被改乱 | **✅ v6.8.0** |
-||| P2 架构文档归档 | 文档 | 在 docs/ 中固化缓存行对齐 + io_uring 延迟提交军规 | **✅ v6.8.0** |
-
+| 任务 | 所属层 | 说明 | 优先级 |
+|------|--------|------|--------|
+| Keep-Alive 连接池 | 执行层 | HTTP 连接复用 | 低 |
+| 真实图像/音频子脑 | 编排层 | 需要特征提取算法 | 中 |
+| TLS/HTTPS 推理接入 | 执行层 | Zig 0.17 std.crypto.tls 稳定后 | 中 |
+| Redis Store | 存储层 | FileStore 的下一步，需要 Redis 依赖 | 中 |
+| 二进制指标/日志直写 | 观测层 | P2-4，需 sidecar 支持 | 高（v4.0）|
+| 多副本外置存储 | 存储层 | StorageInterface → Redis/Qdrant | 高（v4.0）|
+| ComptimeRouter 拆分为框架 + 业务路由 | 路由层 | `*anyopaque` → 具体 `RouteContext`，消除类型安全丢失 | **✅ v6.8.0** |
+| Reactor 延迟提交军规注释 | 执行层 | 在结构体顶部写死 flush 调用位置，防止被改乱 | **✅ v6.8.0** |
+| P2 架构文档归档 | 文档 | 在 docs/ 中固化缓存行对齐 + io_uring 延迟提交军规 | **✅ v6.8.0** |
+|
 > **v3.1 优先级说明**：前三项（`ComptimeRouter` 拆分、`Reactor` 军规注释、架构文档）直接来自 [架构师审查报告](https://github.com/CWLtoken/ZigClaw-AI/blob/agent/大段文字.md)，属于 P0 架构契约级改进，建议在 v3.1 首批处理。
 
 ---
