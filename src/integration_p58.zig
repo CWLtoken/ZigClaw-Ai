@@ -90,7 +90,7 @@ test "P58-3: OrchestratorInterface 返回类型显式化验证" {
     const result: interface.OrchestrateResult = try o.orchestrate("type_check", .Text, &seq);
 
     // 验证 OrchestrateResult 字段可见（显性直白）
-    std.debug.assert(result.token_seq != undefined);
+    std.debug.assert(@intFromPtr(result.token_seq) != 0);  // 指针地址非零，替代 undefined 比较
     std.debug.assert(result.token_seq.len >= 1);
 
     std.debug.print("P58-3: OrchestratorInterface 返回类型显式化 通过\n", .{});

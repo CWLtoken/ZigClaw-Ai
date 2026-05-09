@@ -7,8 +7,8 @@
 
 **ZigClaw-AI** 是一个基于 **Zig 0.16** 构建的高性能异步 AI 客服系统框架。采用 io_uring 底层、事件驱动架构和六层静态分层设计，严格遵守"**显性直白、扁平低代码、无依赖0**"三大军规。
 
-> **当前状态：v6.8.0-lts-final — v3.0 LTS 冻结**  \\
-|> 测试状态：**144/144 全绿** ✅（ReleaseSafe）| 标签：`v6.8.0-lts-final`
+> **当前状态：v6.8.1-lts — v3.0 LTS 冻结**  \\
+|> 测试状态：**144/144 全绿** ✅（ReleaseSafe）| 标签：`v6.8.1-lts`
 |
 ---
 
@@ -250,7 +250,7 @@ const std = @import("std");
 | v6.5.0 | v6.5.0-lts | DRD-061 | P0 安全修复 + P1 契约强化 + 多副本边界文档 | 138 |
 | v6.6.0 | v6.6.0-lts-final | DRD-061 | OrchestratorInterface 显式化 + metrics MetricsError + C依赖白名单 | 140 |
 | v6.7.0 | v6.7.0-lts-final | P2 | 缓存行对齐 + io_uring 批量提交 + Comptime 路由 + ExecutorInterface 显式化 | 142 |
-| v6.8.0 | v6.8.0-lts-final | P2-3 重构 | ComptimeRouter 拆成框架+业务路由（RouteContext 类型安全）+ Reactor 军规注释 + AlignedAtomicU64 注释 + P2 架构文档 | 144 |
+| v6.8.0 | v6.8.1-lts | P2-3 重构 | ComptimeRouter 拆成框架+业务路由（RouteContext 类型安全）+ Reactor 军规注释 + AlignedAtomicU64 注释 + P2 架构文档 | 144 |
 |
 ### v3.0 架构交付清单
 
