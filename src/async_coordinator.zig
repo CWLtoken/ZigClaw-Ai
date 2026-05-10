@@ -2,8 +2,8 @@
 // 职责：桥接 HTTP 请求和异步推理结果
 // 红线：不导入 reactor/protocol/storage/io_uring（纯逻辑组件）
 
-const std = @import("std");
-const mem = std.mem;
+const mem = @import("std").mem;
+const testing = @import("std").testing;
 
 /// 推理完成回调
 pub const InferenceCallback = *const fn (result: []const u8, user_data: ?*anyopaque) void;
@@ -48,7 +48,6 @@ pub const Coordinator = struct {
 
 // 单元测试：协调器基本功能
 test "Coordinator: 提交和完成" {
-    const testing = std.testing;
 
     // 用结构体封装结果数据
     const Result = struct {
@@ -88,7 +87,6 @@ test "Coordinator: 提交和完成" {
 }
 
 test "Coordinator: 忙碌时拒绝新请求" {
-    const testing = std.testing;
 
     var coordinator = Coordinator.init();
 
@@ -118,7 +116,7 @@ test "Coordinator: 忙碌时拒绝新请求" {
 }
 
 test "Coordinator: 无待处理时 complete 返回 false" {
-    const testing = std.testing;
+
     var coordinator = Coordinator.init();
     try testing.expect(!coordinator.complete("test"));
 }

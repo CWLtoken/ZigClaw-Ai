@@ -2,9 +2,8 @@
 // 入口层 | Layer: Entry
 // 零拷贝 JSON 提取器 — 提取 "input" 字段的位置（不复制字符串）
 
-const std = @import("std");
-const mem = std.mem;
-const debug = std.debug;
+const debug = @import("std").debug;
+const mem = @import("std").mem;
 
 /// 字段在 JSON 缓冲区中的位置（零拷贝引用）
 pub const FieldLocation = struct {

@@ -1,4 +1,8 @@
-const std = @import("std");
+const fmt = @import("std").fmt;
+const heap = @import("std").heap;
+const log = @import("std").log;
+const mem = @import("std").mem;
+const testing = @import("std").testing;
 const router = @import("router.zig");
 const token = @import("token.zig");
 
@@ -8,7 +12,7 @@ pub const InferenceResult = struct {
     len: usize,
 
     // 显性内存释放，无隐藏逻辑
-    pub fn deinit(self: *InferenceResult, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *InferenceResult, allocator: mem.Allocator) void {
         allocator.free(self.text);
         self.* = undefined;
     }
@@ -19,7 +23,7 @@ const inference_client = @import("inference_client.zig");
 
 // 核心推理函数：优先使用 Ollama 本地推理，OpenAI 路径标记为 WIP
 pub fn infer(
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     prompt: []const u8,
     max_tokens: u32,
     api_key: []const u8,
@@ -31,8 +35,8 @@ pub fn infer(
     // 默认使用 llama3 模型，如需切换可添加模型参数
     const ollama_result = inference_client.query_ollama(prompt, "llama3") catch |err| {
         // Ollama 未运行或调用失败，返回错误信息（非模拟）
-        std.log.warn("Ollama 调用失败: {}，返回错误响应", .{err});
-        const error_response = try std.fmt.allocPrint(allocator, "推理服务不可用（Ollama未运行？）：{s}", .{@errorName(err)});
+        log.warn("Ollama 调用失败: {}，返回错误响应", .{err});
+        const error_response = try fmt.allocPrint(allocator, "推理服务不可用（Ollama未运行？）：{s}", .{@errorName(err)});
         return InferenceResult{
             .text = error_response,
             .len = error_response.len,
@@ -42,7 +46,7 @@ pub fn infer(
     // ollama_result 需要释放（query_ollama 使用 page_allocator）
     // 复制到传入的 allocator
     const result_text = try allocator.dupe(u8, ollama_result);
-    std.heap.page_allocator.free(ollama_result);
+    heap.page_allocator.free(ollama_result);
 
     return InferenceResult{
         .text = result_text,
@@ -52,7 +56,7 @@ pub fn infer(
 
 // 从 TokenSequence 推理：拼接文本 prompt，调用 infer()
 pub fn infer_from_tokens(
-    allocator: std.mem.Allocator,
+    allocator: mem.Allocator,
     seq: *const token.TokenSequence,
     max_tokens: u32,
     api_key: []const u8,
@@ -80,7 +84,7 @@ pub fn infer_from_tokens(
 
 // 极简单元测试：仅校验核心逻辑
 test "infer: 空API Key直接报错" {
-    const testing = std.testing;
+
     // 注意：模拟实现已移除空Key检查，此测试改为验证正常返回
     var result = try infer(testing.allocator, "test", 100, "fake-key");
     defer result.deinit(testing.allocator);

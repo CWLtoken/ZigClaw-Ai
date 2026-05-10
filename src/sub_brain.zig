@@ -1,4 +1,4 @@
-const std = @import("std");
+const heap = @import("std").heap;
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
 
@@ -92,8 +92,8 @@ fn imageExtractReal(input: []const u8, output: []f32) anyerror!void {
     if (output.len < 64) return error.BufferTooSmall;
 
     // 将图像路径转为 C 字符串（null-terminated）- Zig 0.16 兼容实现
-    const path_c = try std.heap.page_allocator.alloc(u8, input.len + 1);
-    defer std.heap.page_allocator.free(path_c);
+    const path_c = try heap.page_allocator.alloc(u8, input.len + 1);
+    defer heap.page_allocator.free(path_c);
     @memcpy(path_c[0..input.len], input);
     path_c[input.len] = 0; // null 终止符
 

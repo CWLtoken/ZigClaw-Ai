@@ -2,11 +2,12 @@
 // ZigClaw V2.4 | 阶段23B | HTTP 协议处理器 - 直接使用 Reactor 走 io_uring
 // 架构师红线：不得修改 protocol.zig/reactor.zig/io_uring.zig
 // 设计：直接使用 Reactor 进行 HTTP I/O，实现 HTTP 状态机
-const std = @import("std");
+const fmt = @import("std").fmt;
+const heap = @import("std").heap;
+const mem = @import("std").mem;
 const io_uring = @import("io_uring.zig");
 const reactor = @import("reactor.zig");
 const orchestrator = @import("orchestrator.zig");
-const mem = std.mem;
 
 // HTTP 请求解析状态
 const HttpParseState = enum {
@@ -194,8 +195,8 @@ pub const HttpProtocolHandler = struct {
         
         // 调用编排器进行推理（简化版，实际应调用 orchestrator.infer()）
         // 注意：这里避免导入 orchestrator，使用简化实现
-        const response_body = std.fmt.allocPrint(
-            std.heap.page_allocator,
+        const response_body = fmt.allocPrint(
+            heap.page_allocator,
             "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"推理结果（暂未集成Orchestrator）\"}}",
             .{ input.?, modality }
         ) catch {
@@ -219,7 +220,7 @@ pub const HttpProtocolHandler = struct {
     /// 发送 HTTP 响应
     fn send_http_response(self: *HttpProtocolHandler, fd: i32) !void {
         // 构造 HTTP 响应
-        const response_str = std.fmt.bufPrint(
+        const response_str = fmt.bufPrint(
             &self.send_buf,
             "HTTP/1.1 {d} {s}\r\n" ++
             "Content-Type: {s}\r\n" ++

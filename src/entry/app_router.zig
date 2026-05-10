@@ -2,7 +2,8 @@
 // P2-3: 具体业务路由配置
 // 依赖 comptime_router.zig 通用框架，定义本服务的路由表
 
-const std = @import("std");
+const debug = @import("std").debug;
+const log = @import("std").log;
 const comptime_router = @import("../comptime_router.zig");
 const RouteContext = comptime_router.RouteContext;
 const Route = comptime_router.Route;
@@ -13,17 +14,17 @@ const ComptimeRouter = comptime_router.ComptimeRouter;
 // ============================================================================
 
 fn handleText(ctx: *RouteContext) void {
-    std.log.info("[AppRouter] TEXT handler, req_id={d}", .{ctx.req_id});
+    log.info("[AppRouter] TEXT handler, req_id={d}", .{ctx.req_id});
     // 实际项目中调用编排层处理文本推理
 }
 
 fn handleImage(ctx: *RouteContext) void {
-    std.log.info("[AppRouter] IMAGE handler, req_id={d}", .{ctx.req_id});
+    log.info("[AppRouter] IMAGE handler, req_id={d}", .{ctx.req_id});
     // 实际项目中调用编排层处理图像推理
 }
 
 fn handleHealth(ctx: *RouteContext) void {
-    std.log.info("[AppRouter] HEALTH handler, req_id={d}", .{ctx.req_id});
+    log.info("[AppRouter] HEALTH handler, req_id={d}", .{ctx.req_id});
     // 实际项目中返回健康检查结果
 }
 
@@ -67,6 +68,6 @@ test "AppRouter: 未匹配路由不崩溃" {
 test "AppRouter: 编译期类型安全验证" {
     // RouteContext 字段在编译期可见，无需 @ptrCast
     var ctx = RouteContext{ .req_id = 42, .modality = 1 };
-    std.debug.assert(ctx.req_id == 42);
+    debug.assert(ctx.req_id == 42);
     routeRequest(1, &ctx);
 }

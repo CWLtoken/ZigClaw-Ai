@@ -4,8 +4,8 @@
 // 全部静态分配，无堆分配，线性扫描 O(n)，n ≤ 256
 
 const router = @import("router.zig");
-const std = @import("std");
-const mem = std.mem;
+const debug = @import("std").debug;
+const mem = @import("std").mem;
 
 pub const MAX_RULES = 256;
 
@@ -94,7 +94,7 @@ test "P45: RouteTable 初始化全null" {
     const table = RouteTable.init();
     for (0..MAX_RULES) |_| {
         const result = table.match("any");
-        std.debug.assert(result == null);
+        debug.assert(result == null);
     }
 }
 
@@ -107,7 +107,7 @@ test "P45: RouteTable 设置和获取处理器（精确匹配）" {
     }.handler;
 
     try table.add_rule(.exact, "/v1/infer", test_handler, 10);
-    std.debug.assert(table.match("/v1/infer") != null);
-    std.debug.assert(table.match("/v1/other") == null);
-    std.debug.print("P45: 路由表精确匹配测试通过\n", .{});
+    debug.assert(table.match("/v1/infer") != null);
+    debug.assert(table.match("/v1/other") == null);
+    debug.print("P45: 路由表精确匹配测试通过\n", .{});
 }

@@ -2,7 +2,7 @@
 // 存储层 | Layer: Storage
 // SSD 持久化，双版本页原子切换
 
-const std = @import("std");
+// ssd_persist.zig: 纯类型锚点，无 std 运行时依赖
 const io_uring = @import("io_uring.zig");
 const heat_pool = @import("heat_pool.zig");
 

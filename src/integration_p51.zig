@@ -6,8 +6,6 @@ const http_server = @import("http_server.zig");
 const context = @import("context.zig");
 const time = std.time;
 
-const std_debug = std.debug;
-
 // 测试辅助：启动服务器实例（子进程）
 fn startServer(port: u16) !std.process.Child {
     const argv = [_][]const u8{
@@ -51,13 +49,13 @@ fn sendHttpRequest(port: u16, path: []const u8) ![]u8 {
 test "P51: --port 参数解析" {
     // TODO: full impl requires std.process.Child + SIGINT
     const port: u16 = 9090;
-    std_debug.print("P51集成测试：--port 参数解析通过 (port={d})\n", .{port});
+    std.debug.print("P51集成测试：--port 参数解析通过 (port={d})\n", .{port});
 }
 
 test "P51: 多实例部署 - 两个实例独立响应" {
     // TODO: full impl requires std.process.Child + SIGINT
-    std_debug.print("P51集成测试：多实例部署测试开始\n", .{});
-    std_debug.print("P51集成测试：多实例部署测试通过（简化版）\n", .{});
+    std.debug.print("P51集成测试：多实例部署测试开始\n", .{});
+    std.debug.print("P51集成测试：多实例部署测试通过（简化版）\n", .{});
 }
 
 test "P51: 优雅关闭探针 - shutting_down 字段" {
@@ -72,5 +70,5 @@ test "P51: 优雅关闭探针 - shutting_down 字段" {
     // 注意：这里无法直接访问 shutting_down 字段（它是私有的）
     // 但可以通过 /health?verbose=true 验证
 
-    std_debug.print("P51集成测试：优雅关闭探针测试通过\n", .{});
+    std.debug.print("P51集成测试：优雅关闭探针测试通过\n", .{});
 }

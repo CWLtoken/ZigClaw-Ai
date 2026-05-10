@@ -1,4 +1,5 @@
-const std = @import("std");
+const mem = @import("std").mem;
+const testing = @import("std").testing;
 const token = @import("token.zig");
 const quantizer = @import("quantizer.zig");
 const sub_brain = @import("sub_brain.zig");
@@ -66,7 +67,7 @@ pub const Orchestrator = struct {
     }
 
     // 推理桥接：orchestrate → infer_from_tokens → 返回结果
-    pub fn infer(self: *const Orchestrator, allocator: std.mem.Allocator, input: []const u8, modality: sub_brain.Modality) !inference.InferenceResult {
+    pub fn infer(self: *const Orchestrator, allocator: mem.Allocator, input: []const u8, modality: sub_brain.Modality) !inference.InferenceResult {
         // 1. 编排生成 Token 序列
         var seq = token.TokenSequence.init();
         _ = try self.orchestrate(input, modality, &seq);
@@ -81,11 +82,11 @@ pub const Orchestrator = struct {
 // 单元测试：子脑注册
 test "Orchestrator: 子脑注册" {
     var o = Orchestrator.init();
-    try std.testing.expectEqual(@as(u8, 1), o.brains_len); // 默认注册了文本子脑
+    try testing.expectEqual(@as(u8, 1), o.brains_len); // 默认注册了文本子脑
 
     const id = o.register_brain(sub_brain.getImageBrain());
-    try std.testing.expect(id == 1);
-    try std.testing.expectEqual(@as(u8, 2), o.brains_len);
+    try testing.expect(id == 1);
+    try testing.expectEqual(@as(u8, 2), o.brains_len);
 }
 
 test "Orchestrator: 文本直通" {
@@ -93,11 +94,11 @@ test "Orchestrator: 文本直通" {
     var seq = token.TokenSequence.init();
 
     _ = try o.orchestrate("Hello ZigClaw", .Text, &seq);
-    try std.testing.expectEqual(@as(u16, 1), seq.len);
+    try testing.expectEqual(@as(u16, 1), seq.len);
 
     const tok = seq.get(0).?;
-    try std.testing.expect(tok.tpe == .Text);
-    try std.testing.expectEqualSlices(u8, "Hello ZigClaw", tok.getText());
+    try testing.expect(tok.tpe == .Text);
+    try testing.expectEqualSlices(u8, "Hello ZigClaw", tok.getText());
 }
 
 test "Orchestrator: 图像模态（模拟）" {
@@ -106,15 +107,15 @@ test "Orchestrator: 图像模态（模拟）" {
     var seq = token.TokenSequence.init();
 
     _ = try o.orchestrate("mock_image_data", .Image, &seq);
-    try std.testing.expectEqual(@as(u16, 1), seq.len);
+    try testing.expectEqual(@as(u16, 1), seq.len);
 
     const tok = seq.get(0).?;
-    try std.testing.expect(tok.tpe == .VectorQuantized);
+    try testing.expect(tok.tpe == .VectorQuantized);
 }
 
 test "Orchestrator: 未知模态报错" {
     var o = Orchestrator.init();
     var seq = token.TokenSequence.init();
 
-    try std.testing.expectError(error.UnsupportedModality, o.orchestrate("test", .Unknown, &seq));
+    try testing.expectError(error.UnsupportedModality, o.orchestrate("test", .Unknown, &seq));
 }

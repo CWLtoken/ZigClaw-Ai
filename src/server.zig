@@ -1,9 +1,9 @@
 // src/server.zig
 // ZigClaw V2.4 阶段 5 | 服务端网络脚手架
 // 依赖：io_uring.zig（Syscall 块、SockAddrIn、Ring）
-// 军规：本文件允许 const std = @import("std")（仅用于测试 print，非主干约束）
+// server.zig: 精确导入，无 std 整包依赖
 
-const std = @import("std");
+// server.zig: 无直接 std 依赖
 const io_uring = @import("io_uring.zig");
 
 /// 服务端上下文：持有监听 socket 和控制端 socket

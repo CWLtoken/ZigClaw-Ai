@@ -1,5 +1,5 @@
-const std = @import("std");
-const mem = std.mem;
+const http = @import("std").http;
+const mem = @import("std").mem;
 
 // ============================================================================
 // inference_client.zig - Ollama 推理客户端 (WIP - Work In Progress)
@@ -15,7 +15,7 @@ const mem = std.mem;
 //   3. 验证服务：curl http://localhost:11434/api/tags
 //
 // Zig 0.16 限制：
-//   - `std.http.Client` API 复杂，需要 `Io.Threaded` 初始化
+//   - `http.Client` API 复杂，需要 `Io.Threaded` 初始化
 //   - 无 `client.open` 方法，需要手动构造 HTTP 请求
 //   - 等待 Zig 0.17 标准库稳定后再实现完整客户端
 //
