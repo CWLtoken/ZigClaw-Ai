@@ -1,10 +1,9 @@
 // src/http_log.zig
 // 入口层 | Layer: Entry
 // 结构化JSON请求日志（无堆分配，手工拼接）
-const std = @import("std");
-const debug = std.debug;
-const fmt = std.fmt;
-const linux = std.os.linux;
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
+const linux = @import("std").os.linux;
 
 /// 日志请求信息到stdout（JSON格式，无堆分配）
 /// 必须在请求处理完成后调用（响应已发送）

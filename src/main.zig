@@ -1,9 +1,8 @@
 // src/main.zig
 // ZigClaw HTTP 服务器启动器 - 阶段28: 军规构建
-const std = @import("std");
-const debug = std.debug;
-const log = std.log;
-const mem = std.mem;
+const debug = @import("std").debug;
+const log = @import("std").log;
+const mem = @import("std").mem;
 const io_uring = @import("io_uring.zig");
 const http_server = @import("http_server.zig");
 
