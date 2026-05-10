@@ -1,9 +1,8 @@
 // src/integration_p16.zig
 // ZigClaw V2.4 阶段 5 | P16: Protocol 基础状态机测试
 
-const std = @import("std");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
@@ -84,10 +83,10 @@ test "Phase16: Protocol basic state machine test" {
     switch (state2) {
         .BodyDone => {},
         .Error => |err| {
-            std.debug.print("Error reason: {s}\n", .{err.reason});
+            @import("std").debug.print("Error reason: {s}\n", .{err.reason});
         },
         else => {
-            std.debug.print("Unexpected state: {s}\n", .{@tagName(state2)});
+            @import("std").debug.print("Unexpected state: {s}\n", .{@tagName(state2)});
         },
     }
     

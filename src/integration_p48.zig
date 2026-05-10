@@ -2,9 +2,8 @@
 // DRD-048：P0 收官 — P48 集成测试
 // 验证：原子递增精度、鉴权失败指标、Prometheus 格式输出
 
-const std = @import("std");
-const debug = std.debug;
-const mem = std.mem;
+const debug = @import("std").debug;
+const mem = @import("std").mem;
 
 // 导入 P48 模块
 const metrics_mod = @import("metrics.zig");

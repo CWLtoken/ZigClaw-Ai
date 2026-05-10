@@ -2,8 +2,7 @@
 // ZigClaw V2.4 Phase12 | IOSQE_IO_LINK: 链式 SQE 事务性 I/O
 // DRD-016: 正常链(WriteV→FSync) + 断裂链(WriteV fail→FSync cancelled)
 // 关键：链断裂时后续 SQE 仍产生 CQE，res=-ECANCELED(-125)
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
 
 test "Phase12: IOSQE_IO_LINK normal chain (WriteV -> FSync)" {

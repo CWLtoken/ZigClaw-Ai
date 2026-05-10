@@ -1,12 +1,11 @@
-const std = @import("std");
-const mem = std.mem;
+const mem = @import("std").mem;
 const inference = @import("inference.zig");
 
 test "P34: 端到端推理验证（Ollama）" {
-    const testing = std.testing;
+    const testing = @import("std").testing;
     const allocator = testing.allocator;
 
-    std.log.info("开始 P34 测试（如果 Ollama 未运行将跳过）", .{});
+    @import("std").log.info("开始 P34 测试（如果 Ollama 未运行将跳过）", .{});
 
     // 调用推理函数
     const test_prompt = "什么是Zig语言？";
@@ -18,7 +17,7 @@ test "P34: 端到端推理验证（Ollama）" {
 
     // 检查是否是错误信息（Ollama 未运行）
     if (mem.startsWith(u8, result.text, "推理服务不可用")) {
-        std.log.warn("Ollama 未运行或推理失败，跳过 P34 测试。错误信息: {s}", .{result.text[0..@min(100, result.len)]});
+        @import("std").log.warn("Ollama 未运行或推理失败，跳过 P34 测试。错误信息: {s}", .{result.text[0..@min(100, result.len)]});
         return; // 直接返回，测试通过（跳过）
     }
 
@@ -28,7 +27,7 @@ test "P34: 端到端推理验证（Ollama）" {
 
     // 打印推理结果（前200字符）
     const display_len = @min(200, result.len);
-    std.log.info("P34 推理结果: {s}", .{result.text[0..display_len]});
+    @import("std").log.info("P34 推理结果: {s}", .{result.text[0..display_len]});
 
     // 验证响应包含有效内容（非空且不是错误信息）
     try testing.expect(!mem.eql(u8, result.text, ""));
@@ -43,5 +42,5 @@ test "P34: 端到端推理验证（Ollama）" {
     }
     try testing.expect(has_chinese); // 推理结果应该包含中文
 
-    std.log.info("P34 端到端测试通过 ✅", .{});
+    @import("std").log.info("P34 端到端测试通过 ✅", .{});
 }

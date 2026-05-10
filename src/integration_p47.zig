@@ -2,9 +2,8 @@
 // 阶段24（DRD-046）P47 集成测试汇总
 // 验证：全局请求ID、零拷贝JSON提取、Bearer鉴权、API路由、上下文注入
 
-const std = @import("std");
-const debug = std.debug;
-const mem = std.mem;
+const debug = @import("std").debug;
+const mem = @import("std").mem;
 
 // 导入所有P47模块
 const context = @import("context.zig");

@@ -1,8 +1,7 @@
 // src/integration_p9.zig
 // ZigClaw V2.4 Phase9 | WriteV + ReadV data consistency loop
 // DRD-012: 证明写入磁盘的数据可以原样读回，验证 io_uring 在同一 fd 上的状态连续性
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
 
 test "Phase9: WriteV then ReadV data consistency loop" {

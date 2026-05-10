@@ -1,5 +1,58 @@
+# ZigClaw-AI 项目
+# 构建产物
+build/
+*.zig.ll
+*.zig.o
+
+# Zig 缓存
 .zig-cache/
-zig-out/
-*:Zone.Identifier
-*.log
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 测试输出
+test_output/
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# ── Hermes Agent 运行时文件 ──
+.claude/
+AGENTS.md
+CLAUDE.md
+.openfang/
+.skill_prompt_snapshot.json
+.hermes_history
+state.db
+state.db-shm
+state.db-wal
+kanban.db
+models_dev_cache.json
+memory/
+sessions/
+pastes/
+sandboxes/
+audio_cache/
+image_cache/
+checkpoints/
+hooks/
+pairing/
+weixin/
+whatsapp/
+logs/
+.state/
+.openfang/workspaces/
+*.vhdx
 main
+*.bin

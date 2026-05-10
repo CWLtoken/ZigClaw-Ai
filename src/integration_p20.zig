@@ -11,8 +11,7 @@
 // 当前 protocol.zig 只支持基础状态机（Idle → HeaderRecv → BodyRecv → BodyDone）
 // 异步处理器功能尚未实现，故此测试被禁用
 
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 
 test "Phase20: DISABLED - 异步回显处理器测试" {
     // 此测试已被禁用，因为当前 protocol.zig 不支持异步处理器

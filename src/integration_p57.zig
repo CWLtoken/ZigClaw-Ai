@@ -5,8 +5,7 @@
 //   2. 文件不存在时加载 → 返回 error.FileNotFound
 //   3. 保存后文件大小与热度池数据大小一致
 
-const std = @import("std");
-const os = std.os.linux;
+const os = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
 const heat_pool = @import("heat_pool.zig");
 const file_store = @import("file_store.zig");
@@ -43,21 +42,21 @@ test "P57-1: saveHeatPool → modify → loadHeatPool → 值一致" {
     pool.heats[1] = 0;
     pool.heats[5] = 0;
     pool.heats[10] = 0;
-    std.debug.assert(pool.get_heat(0) == 0);
+    @import("std").debug.assert(pool.get_heat(0) == 0);
 
     // 从文件加载
     const loaded = try store.loadHeatPool();
 
     // 验证加载后的值与保存前一致
-    std.debug.assert(loaded.get_heat(0) == slot0_before);
-    std.debug.assert(loaded.get_heat(1) == slot1_before);
-    std.debug.assert(loaded.get_heat(5) == slot5_before);
-    std.debug.assert(loaded.get_heat(10) == slot10_before);
+    @import("std").debug.assert(loaded.get_heat(0) == slot0_before);
+    @import("std").debug.assert(loaded.get_heat(1) == slot1_before);
+    @import("std").debug.assert(loaded.get_heat(5) == slot5_before);
+    @import("std").debug.assert(loaded.get_heat(10) == slot10_before);
 
     // 清理
     store.deleteFile();
 
-    std.debug.print("P57-1: save/load 一致性 通过\n", .{});
+    @import("std").debug.print("P57-1: save/load 一致性 通过\n", .{});
 }
 
 // ============================================================================
@@ -71,9 +70,9 @@ test "P57-2: 文件不存在 → error.FileNotFound" {
     store.deleteFile();
 
     const result = store.loadHeatPool();
-    std.debug.assert(result == error.FileNotFound);
+    @import("std").debug.assert(result == error.FileNotFound);
 
-    std.debug.print("P57-2: 文件不存在 → FileNotFound 通过\n", .{});
+    @import("std").debug.print("P57-2: 文件不存在 → FileNotFound 通过\n", .{});
 }
 
 // ============================================================================
@@ -97,7 +96,7 @@ test "P57-3: 文件大小 == HeatPool.heats 字节数" {
         io_uring.Syscall.O_RDONLY,
         0,
     ) catch |err| {
-        std.debug.print("P57-3: 打开文件失败: {}\n", .{err});
+        @import("std").debug.print("P57-3: 打开文件失败: {}\n", .{err});
         store.deleteFile();
         return;
     };
@@ -128,16 +127,16 @@ test "P57-3: 文件大小 == HeatPool.heats 字节数" {
     var stat_buf: StatT = undefined;
     const rc = os.syscall2(.fstat, @as(usize, @intCast(file_fd)), @intFromPtr(&stat_buf));
     if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
-        std.debug.print("P57-3: fstat 失败\n", .{});
+        @import("std").debug.print("P57-3: fstat 失败\n", .{});
         store.deleteFile();
         return;
     }
     const expected_size = @sizeOf(u16) * heat_pool.HEAT_POOL_SIZE; // 2 * 64 = 128
 
-    std.debug.assert(@as(u64, @intCast(stat_buf.size)) == expected_size);
+    @import("std").debug.assert(@as(u64, @intCast(stat_buf.size)) == expected_size);
 
     // 清理
     store.deleteFile();
 
-    std.debug.print("P57-3: 文件大小={d} == 预期={d} 通过\n", .{@as(u64, @intCast(stat_buf.size)), expected_size});
+    @import("std").debug.print("P57-3: 文件大小={d} == 预期={d} 通过\n", .{@as(u64, @intCast(stat_buf.size)), expected_size});
 }

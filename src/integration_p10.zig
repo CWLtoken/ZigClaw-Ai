@@ -2,8 +2,7 @@
 // ZigClaw V2.4 Phase10 | Batch submit: io_uring 的核心性能优势
 // DRD-013: 一次 enter() 提交 4 个 WriteV，一次 ReadV 读回验证
 // 关键：CQE 返回顺序可能与提交顺序不同，必须根据 user_data 识别
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
 
 test "Phase10: Batch submit 4 WriteV + verify with ReadV" {

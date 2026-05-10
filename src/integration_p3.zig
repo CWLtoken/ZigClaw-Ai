@@ -1,8 +1,7 @@
 // src/integration_p3.zig
 // ZigClaw V2.4 Phase3 | IoRequest 架构 | 真实物理内存搬运
-const std = @import("std");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
@@ -51,7 +50,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
 
     // I-C: 错误后立即 reset()，返回 .Idle
     const s1 = proto.step();
-    try testing.expect(std.meta.activeTag(s1) == .Error); // 先确认进入错误状态
+    try testing.expect(@import("std").meta.activeTag(s1) == .Error); // 先确认进入错误状态
     // 手动重置状态
     proto.state = .Idle;
     proto.active_stream_id = 0;

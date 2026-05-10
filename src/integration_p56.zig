@@ -5,7 +5,6 @@
 //   2. 注入正常指标 → 验证无建议返回 null
 //   3. 多次调用 analyze 不崩溃，且建议内容符合预期格式
 
-const std = @import("std");
 const fe = @import("feedback_engine.zig");
 const feedback = @import("feedback.zig");
 
@@ -47,15 +46,15 @@ test "P56-1: 高 ring_full → SQPOLL 建议" {
     };
 
     const result = fe.SimpleLearner.analyze(entry, orch, exec, router, storage);
-    std.debug.assert(result != null);
+    @import("std").debug.assert(result != null);
 
     const suggestion = result.?;
-    std.debug.assert(suggestion.layer == .execution);
-    std.debug.assert(suggestion.confidence == 0.85);
+    @import("std").debug.assert(suggestion.layer == .execution);
+    @import("std").debug.assert(suggestion.confidence == 0.85);
     // 验证是 enable_sq_poll 建议
-    std.debug.assert(suggestion.action == .enable_sq_poll);
+    @import("std").debug.assert(suggestion.action == .enable_sq_poll);
 
-    std.debug.print("P56-1: 高 ring_full → SQPOLL 建议 通过\n", .{});
+    @import("std").debug.print("P56-1: 高 ring_full → SQPOLL 建议 通过\n", .{});
 }
 
 // ============================================================================
@@ -96,9 +95,9 @@ test "P56-2: 正常指标 → null" {
     };
 
     const result = fe.SimpleLearner.analyze(entry, orch, exec, router, storage);
-    std.debug.assert(result == null);
+    @import("std").debug.assert(result == null);
 
-    std.debug.print("P56-2: 正常指标 → null 通过\n", .{});
+    @import("std").debug.print("P56-2: 正常指标 → null 通过\n", .{});
 }
 
 // ============================================================================
@@ -141,9 +140,9 @@ test "P56-3: 多次调用不崩溃 + 路由高未命中 → router 建议" {
 
     // 调用 1：高路由未命中
     const r1 = fe.SimpleLearner.analyze(entry, orch, exec, router_high_miss, storage);
-    std.debug.assert(r1 != null);
-    std.debug.assert(r1.?.layer == .router);
-    std.debug.assert(r1.?.confidence == 0.75);
+    @import("std").debug.assert(r1 != null);
+    @import("std").debug.assert(r1.?.layer == .router);
+    @import("std").debug.assert(r1.?.confidence == 0.75);
 
     // 调用 2：正常指标
     const router_normal = feedback.RouterMetrics{
@@ -152,7 +151,7 @@ test "P56-3: 多次调用不崩溃 + 路由高未命中 → router 建议" {
         .middleware_reject = 0,
     };
     const r2 = fe.SimpleLearner.analyze(entry, orch, exec, router_normal, storage);
-    std.debug.assert(r2 == null);
+    @import("std").debug.assert(r2 == null);
 
     // 调用 3：高错误率
     const entry_high_err = feedback.EntryMetrics{
@@ -163,13 +162,13 @@ test "P56-3: 多次调用不崩溃 + 路由高未命中 → router 建议" {
         .active_connections = 5,
     };
     const r3 = fe.SimpleLearner.analyze(entry_high_err, orch, exec, router_normal, storage);
-    std.debug.assert(r3 != null);
-    std.debug.assert(r3.?.layer == .entry);
-    std.debug.assert(r3.?.confidence == 0.8);
+    @import("std").debug.assert(r3 != null);
+    @import("std").debug.assert(r3.?.layer == .entry);
+    @import("std").debug.assert(r3.?.confidence == 0.8);
 
     // 调用 4：analyzeAndEmit 不崩溃
     fe.SimpleLearner.analyzeAndEmit(entry, orch, exec, router_high_miss, storage);
     fe.SimpleLearner.analyzeAndEmit(entry, orch, exec, router_normal, storage);
 
-    std.debug.print("P56-3: 多次调用不崩溃 + 路由建议 通过\n", .{});
+    @import("std").debug.print("P56-3: 多次调用不崩溃 + 路由建议 通过\n", .{});
 }

@@ -3,7 +3,6 @@
 // 验证各层的关键接口行为符合契约
 // 共 2 个测试，将测试总数从 136 → 138
 
-const std = @import("std");
 
 // ============================================================================
 // 测试 1: FileStore StorageVTable 调用链路验证
@@ -17,7 +16,7 @@ test "P58-1: FileStore StorageVTable 调用链路" {
 
     // 验证 vtable.get 可调用（当前返回 null，因为 FileStore 暂不支持 key-value get）
     const result = fs.vtable.get(&store, 42);
-    std.debug.assert(result == null); // 当前实现返回 null
+    @import("std").debug.assert(result == null); // 当前实现返回 null
 
     // 验证 vtable.set 可调用（当前为空操作）
     fs.vtable.set(&store, 42, "test") catch {};
@@ -25,7 +24,7 @@ test "P58-1: FileStore StorageVTable 调用链路" {
     // 清理
     store.deleteFile();
 
-    std.debug.print("P58-1: FileStore StorageVTable 调用链路 通过\n", .{});
+    @import("std").debug.print("P58-1: FileStore StorageVTable 调用链路 通过\n", .{});
 }
 
 // ============================================================================
@@ -63,14 +62,14 @@ test "P58-2: Orchestrator orchestrate 接口一致性" {
 
     const result = o.orchestrate("hello", mod.Text, &seq) catch |err| {
         // 如果失败，至少验证了接口可调用（不崩溃即可）
-        std.debug.print("orchestrate 返回错误（预期）: {}\n", .{err});
+        @import("std").debug.print("orchestrate 返回错误（预期）: {}\n", .{err});
         return;
     };
 
     // 验证返回的 token_seq 中包含至少一个 token
-    std.debug.assert(result.token_seq.len >= 1);
+    @import("std").debug.assert(result.token_seq.len >= 1);
 
-    std.debug.print("P58-2: Orchestrator orchestrate 接口一致性 通过\n", .{});
+    @import("std").debug.print("P58-2: Orchestrator orchestrate 接口一致性 通过\n", .{});
 }
 
 // ============================================================================
@@ -91,9 +90,9 @@ test "P58-3: OrchestratorInterface 返回类型显式化验证" {
 
     // 验证 OrchestrateResult 字段可见（显性直白）
     // TokenSequence 是结构体（非切片），验证 len >= 1 即可
-    std.debug.assert(result.token_seq.len >= 1);
+    @import("std").debug.assert(result.token_seq.len >= 1);
 
-    std.debug.print("P58-3: OrchestratorInterface 返回类型显式化 通过\n", .{});
+    @import("std").debug.print("P58-3: OrchestratorInterface 返回类型显式化 通过\n", .{});
 }
 
 // ============================================================================
@@ -108,21 +107,21 @@ test "P58-4: formatMetrics 显式错误处理" {
     var buf: [2048]u8 = undefined;
     const len = metrics_mod.formatMetrics(&buf) catch |err| {
         // 显式处理错误，而非 unreachable
-        std.debug.print("formatMetrics 错误: {}\n", .{err});
+        @import("std").debug.print("formatMetrics 错误: {}\n", .{err});
         return;
     };
-    std.debug.assert(len > 0);
+    @import("std").debug.assert(len > 0);
 
     // 使用极小缓冲区触发 BufferTooSmall
     var tiny_buf: [1]u8 = undefined;
     const result = metrics_mod.formatMetrics(&tiny_buf);
     // 极小缓冲区可能成功（如果输出很短）或失败，关键是错误能被捕获
     if (result) |small_len| {
-        std.debug.assert(small_len >= 0);
+        @import("std").debug.assert(small_len >= 0);
     } else |small_err| {
         // 显式错误处理路径
-        std.debug.assert(small_err == metrics_mod.MetricsError.BufferTooSmall);
+        @import("std").debug.assert(small_err == metrics_mod.MetricsError.BufferTooSmall);
     }
 
-    std.debug.print("P58-4: formatMetrics 显式错误处理 通过\n", .{});
+    @import("std").debug.print("P58-4: formatMetrics 显式错误处理 通过\n", .{});
 }

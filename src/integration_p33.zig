@@ -1,8 +1,7 @@
 // src/integration_p33.zig
 // ZigClaw V2.4 | 基础状态机验证 | 简化版（原 Keep-Alive 测试暂时禁用）
-const std = @import("std");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const io_uring = @import("io_uring.zig");
 const protocol = @import("protocol.zig");
 const storage = @import("storage.zig");
@@ -96,7 +95,7 @@ test "P33: 基础状态机验证（Idle -> HeaderRecv -> BodyRecv -> BodyDone）
     proto.active_stream_id = 0;
     try testing.expectEqual(protocol.State.Idle, proto.state);
     
-    std.debug.print("✅ P33 基础状态机测试通过！\n", .{});
+    @import("std").debug.print("✅ P33 基础状态机测试通过！\n", .{});
 }
 
 // TODO: 当 protocol.zig 支持 Keep-Alive 后，恢复以下测试：

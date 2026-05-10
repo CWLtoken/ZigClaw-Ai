@@ -1,40 +1,39 @@
 // src/integration_p51.zig
 // P51 集成测试：多实例部署验证与优雅关闭探针
 
-const std = @import("std");
 const http_server = @import("http_server.zig");
 const context = @import("context.zig");
-const time = std.time;
+const time = @import("std").time;
 
 // 测试辅助：启动服务器实例（子进程）
-fn startServer(port: u16) !std.process.Child {
+fn startServer(port: u16) !@import("std").process.Child {
     const argv = [_][]const u8{
         "zig",
         "run",
         "src/main.zig",
         "--port",
-        try std.fmt.allocPrint(std.heap.page_allocator, "{d}", .{port}),
+        try @import("std").fmt.allocPrint(@import("std").heap.page_allocator, "{d}", .{port}),
     };
 
-    var child = try std.process.Child.init(&argv, std.heap.page_allocator);
+    var child = try @import("std").process.Child.init(&argv, @import("std").heap.page_allocator);
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     try child.spawn();
 
     // 等待服务器启动（简单延迟）
-    std.time.sleep(500 * std.time.ns_per_ms);
+    time.sleep(500 * time.ns_per_ms);
 
     return child;
 }
 
 // 测试辅助：发送 HTTP 请求
 fn sendHttpRequest(port: u16, path: []const u8) ![]u8 {
-    const allocator = std.heap.page_allocator;
-    const url = try std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}{s}", .{ port, path });
+    const allocator = @import("std").heap.page_allocator;
+    const url = try @import("std").fmt.allocPrint(allocator, "http://127.0.0.1:{d}{s}", .{ port, path });
     defer allocator.free(url);
 
-    // 使用 std.http 客户端（简化版）
-    var client = std.http.Client{ .allocator = allocator };
+    // 使用 @import("std").http 客户端（简化版）
+    var client = @import("std").http.Client{ .allocator = allocator };
     defer client.deinit();
 
     var response = try client.fetch(.{
@@ -47,19 +46,19 @@ fn sendHttpRequest(port: u16, path: []const u8) ![]u8 {
 }
 
 test "P51: --port 参数解析" {
-    // TODO: full impl requires std.process.Child + SIGINT
+    // TODO: full impl requires @import("std").process.Child + SIGINT
     const port: u16 = 9090;
-    std.debug.print("P51集成测试：--port 参数解析通过 (port={d})\n", .{port});
+    @import("std").debug.print("P51集成测试：--port 参数解析通过 (port={d})\n", .{port});
 }
 
 test "P51: 多实例部署 - 两个实例独立响应" {
-    // TODO: full impl requires std.process.Child + SIGINT
-    std.debug.print("P51集成测试：多实例部署测试开始\n", .{});
-    std.debug.print("P51集成测试：多实例部署测试通过（简化版）\n", .{});
+    // TODO: full impl requires @import("std").process.Child + SIGINT
+    @import("std").debug.print("P51集成测试：多实例部署测试开始\n", .{});
+    @import("std").debug.print("P51集成测试：多实例部署测试通过（简化版）\n", .{});
 }
 
 test "P51: 优雅关闭探针 - shutting_down 字段" {
-    // TODO: full impl requires std.process.Child + SIGINT
+    // TODO: full impl requires @import("std").process.Child + SIGINT
     context.resetRequestCounter();
 
     var metrics = http_server.ServerMetrics.init();
@@ -70,5 +69,5 @@ test "P51: 优雅关闭探针 - shutting_down 字段" {
     // 注意：这里无法直接访问 shutting_down 字段（它是私有的）
     // 但可以通过 /health?verbose=true 验证
 
-    std.debug.print("P51集成测试：优雅关闭探针测试通过\n", .{});
+    @import("std").debug.print("P51集成测试：优雅关闭探针测试通过\n", .{});
 }

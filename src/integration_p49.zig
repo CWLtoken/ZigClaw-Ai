@@ -2,9 +2,8 @@
 // DRD-049：阶段 25 — P49 集成测试
 // 验证：延迟分桶递增、/metrics 输出包含新指标
 
-const std = @import("std");
-const debug = std.debug;
-const mem = std.mem;
+const debug = @import("std").debug;
+const mem = @import("std").mem;
 
 // 导入 P49 模块
 const metrics_mod = @import("metrics.zig");
