@@ -56,3 +56,4 @@ logs/
 *.vhdx
 main
 *.bin
+.gitnexus
