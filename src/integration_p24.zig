@@ -1,9 +1,8 @@
 // src/integration_p24.zig
 // ZigClaw V2.4 Phase12 | 压力测试 | 异常注入测试
-const std = @import("std");
 const router = @import("router.zig");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");

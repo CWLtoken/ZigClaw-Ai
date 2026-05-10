@@ -1,7 +1,6 @@
 // src/integration_p6.zig
 // ZigClaw V2.4 Phase6 | io_uring_enter 系统调用验证
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
 const reactor_mod = @import("reactor.zig");
 

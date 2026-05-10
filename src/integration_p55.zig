@@ -5,7 +5,6 @@
 //   2. IBus 端点 /ibus JSON 输出包含 "execution" 和 "router" 段
 //   3. emit() 不崩溃
 
-const std = @import("std");
 const ibus = @import("ibus.zig");
 const feedback = @import("feedback.zig");
 
@@ -30,14 +29,14 @@ test "P55-1: record execution metrics — 更新后读取正确" {
     // 由于没有 getter，使用零长度缓冲区调用 formatBusStatus 确认不崩溃
     var buf: [2048]u8 = undefined;
     const len = ibus.formatBusStatus(&buf);
-    std.debug.assert(len > 0);
+    @import("std").debug.assert(len > 0);
 
     // 检查输出包含 "uring_submit_count"
     const output = buf[0..len];
-    std.debug.assert(std.mem.indexOf(u8, output, "uring_submit_count") != null);
-    std.debug.assert(std.mem.indexOf(u8, output, "\"uring_submit_count\": 42") != null);
+    @import("std").debug.assert(@import("std").mem.indexOf(u8, output, "uring_submit_count") != null);
+    @import("std").debug.assert(@import("std").mem.indexOf(u8, output, "\"uring_submit_count\": 42") != null);
 
-    std.debug.print("P55-1: record execution metrics 通过\n", .{});
+    @import("std").debug.print("P55-1: record execution metrics 通过\n", .{});
 }
 
 // ============================================================================
@@ -69,23 +68,23 @@ test "P55-2: formatBusStatus JSON — 包含 execution 和 router 段" {
     // 格式化
     var buf: [2048]u8 = undefined;
     const len = ibus.formatBusStatus(&buf);
-    std.debug.assert(len > 0);
+    @import("std").debug.assert(len > 0);
 
     const output = buf[0..len];
 
     // 验证包含 "execution" 段
-    std.debug.assert(std.mem.indexOf(u8, output, "\"execution\"") != null);
+    @import("std").debug.assert(@import("std").mem.indexOf(u8, output, "\"execution\"") != null);
 
     // 验证包含 "router" 段
-    std.debug.assert(std.mem.indexOf(u8, output, "\"router\"") != null);
+    @import("std").debug.assert(@import("std").mem.indexOf(u8, output, "\"router\"") != null);
 
     // 验证包含 entry 数据
-    std.debug.assert(std.mem.indexOf(u8, output, "\"request_count\"") != null);
+    @import("std").debug.assert(@import("std").mem.indexOf(u8, output, "\"request_count\"") != null);
 
     // 验证包含 router 数据
-    std.debug.assert(std.mem.indexOf(u8, output, "\"route_hit\": 80") != null);
+    @import("std").debug.assert(@import("std").mem.indexOf(u8, output, "\"route_hit\": 80") != null);
 
-    std.debug.print("P55-2: formatBusStatus JSON 通过\n", .{});
+    @import("std").debug.print("P55-2: formatBusStatus JSON 通过\n", .{});
 }
 
 // ============================================================================
@@ -99,5 +98,5 @@ test "P55-3: emit 事件发射 — 不崩溃" {
     ibus.emit("");
 
     // 如果执行到这里，说明没有崩溃
-    std.debug.print("P55-3: emit 事件发射 通过\n", .{});
+    @import("std").debug.print("P55-3: emit 事件发射 通过\n", .{});
 }

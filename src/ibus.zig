@@ -17,9 +17,14 @@ const debug = @import("std").debug;
 const feedback = @import("feedback.zig");
 
 // ============================================================================
-// 原有的 ModelFeedback（保留向后兼容）
+// 原有的 ModelFeedback（已废弃 → 迁移到 feedback.zig 的 LayerMetrics）
+// DRD-058 迁移路径：
+//   1. 所有调用 write_metrics/read_metrics 的代码改为 record()/readMetrics()
+//   2. ModelFeedback 的字段逐步映射到 LayerMetrics 子类型
+//   3. 本段代码将在 v3.1 移除
 // ============================================================================
 
+// 已废弃：改用 feedback.LayerMetrics + ibus.record()（v3.1 移除）
 pub const ModelFeedback = struct {
     ssd_heat_version_flip_rate: f32,
     arena_pressure: f32,
@@ -28,13 +33,14 @@ pub const ModelFeedback = struct {
     current_flush_interval_sec: u16,
 };
 
+// 已废弃：改用 feedback.EntryMetrics / OrchMetrics / ExecMetrics（v3.1 移除）
 pub const LatencyAttentionEvents = struct {
     count: u16,
     last_latency_ms: u16,
     context_hash: u32,
 };
 
-// 全局静态反馈缓冲区（保留）
+// 全局静态反馈缓冲区（保留，v3.1 移除）
 var g_model_feedback: ModelFeedback = .{
     .ssd_heat_version_flip_rate = 0,
     .arena_pressure = 0,
@@ -43,10 +49,12 @@ var g_model_feedback: ModelFeedback = .{
     .current_flush_interval_sec = 0,
 };
 
+// 已废弃：改用 ibus.record(layer, metrics)（v3.1 移除）
 pub fn write_metrics(new_fb: ModelFeedback) void {
     g_model_feedback = new_fb;
 }
 
+// 已废弃：改用 ibus.readMetrics() 返回 LayerMetrics（v3.1 移除）
 pub fn read_metrics() *const ModelFeedback {
     return &g_model_feedback;
 }
@@ -91,10 +99,18 @@ var g_storage_metrics: feedback.StorageMetrics = .{
     .arena_bytes_allocated = 0,
 };
 
+/// 初始化所有指标（在 main.zig 启动时调用）
+pub fn init() void {
+    g_entry_metrics = .{};
+    g_orch_metrics = .{};
+    g_exec_metrics = .{};
+    g_router_metrics = .{};
+    g_storage_metrics = .{};
+}
+
 // ============================================================================
 // DRD-058: record() — 各层调用更新指标
 // ============================================================================
-
 pub fn record(layer: feedback.Layer, metrics: feedback.LayerMetrics) void {
     switch (layer) {
         .entry => g_entry_metrics = metrics.entry,
@@ -103,6 +119,17 @@ pub fn record(layer: feedback.Layer, metrics: feedback.LayerMetrics) void {
         .router => g_router_metrics = metrics.router,
         .storage => g_storage_metrics = metrics.storage,
     }
+}
+
+/// 读取所有层指标为统一的 LayerMetrics（供上层查询）
+pub fn readMetrics() feedback.LayerMetrics {
+    return .{
+        .entry = g_entry_metrics,
+        .orchestrator = g_orch_metrics,
+        .execution = g_exec_metrics,
+        .router = g_router_metrics,
+        .storage = g_storage_metrics,
+    };
 }
 
 // ============================================================================

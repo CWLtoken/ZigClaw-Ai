@@ -2,8 +2,7 @@
 // ZigClaw V2.4 Phase11 | Fixed Buffer Pool: IORING_REGISTER_BUFFERS
 // DRD-015: 固定缓冲区池注册 → WriteFixed/ReadFixed → 数据一致性验证
 // 关键：addr 是已注册缓冲区的绝对地址（不是偏移量），buf_index 选择池中缓冲区
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
 
 test "Phase11: ReadFixed/WriteFixed with registered buffer pool" {

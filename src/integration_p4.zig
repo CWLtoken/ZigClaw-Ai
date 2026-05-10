@@ -1,8 +1,7 @@
 // src/integration_p4.zig
 // ZigClaw V2.4 Phase4 | IoRequest 架构 | 单线程 Happy Path
-const std = @import("std");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");

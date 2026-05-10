@@ -1,7 +1,6 @@
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
-const mem = std.mem;
+const mem = @import("std").mem;
 
 test "Phase14: io_uring RECV + SEND full bidirectional loop" {
     var ring = try io_uring.Ring.init();

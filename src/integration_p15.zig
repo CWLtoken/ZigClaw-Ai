@@ -2,10 +2,9 @@
 // ZigClaw V2.4 阶段 5 | Protocol 报头接收测试（简化版）
 // 目标：验证 Protocol 通过模拟 io_uring RECV 接收 13 字节报头，状态机 HeaderRecv → BodyRecv
 
-const std = @import("std");
 const router = @import("router.zig");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");

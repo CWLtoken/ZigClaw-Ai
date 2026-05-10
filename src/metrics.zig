@@ -59,23 +59,23 @@ pub const LATENCY_BUCKETS = [_]f64{ 10, 25, 50, 100, 250, 500, 1000, 2500, 5000,
 const NUM_BUCKETS = LATENCY_BUCKETS.len + 1; // +1 for +Inf bucket
 
 // 每个桶的计数器（静态数组，在 initLatencyBuckets 中初始化）
-// WARNING: single-thread only; buckets_initialized is not atomic
 pub var infer_latency_buckets: [NUM_BUCKETS]atomic.Value(u64) = undefined;
-var buckets_initialized: bool = false;  // WARNING: not atomic, single-thread only
+const init_thresholds = [_]u64{ 100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000 };
+var buckets_initialized = atomic.Value(bool).init(false);
 
 // 初始化桶计数器（在程序启动时调用一次）
 pub fn initLatencyBuckets() void {
-    if (buckets_initialized) return;
+    if (buckets_initialized.load(.acquire)) return;
     for (&infer_latency_buckets) |*bucket| {
         bucket.* = atomic.Value(u64).init(0);
     }
-    buckets_initialized = true;
+    buckets_initialized.store(true, .release);
 }
 
 // 记录推理延迟（单位 ms）
 pub fn observeInferLatency(latency_ms: f64) void {
     // 确保桶已初始化
-    if (!buckets_initialized) initLatencyBuckets();
+    if (!buckets_initialized.load(.acquire)) initLatencyBuckets();
     
     // 找到对应的桶
     for (LATENCY_BUCKETS, 0..) |boundary, i| {
@@ -145,7 +145,7 @@ pub const MetricsError = error{BufferTooSmall};
 
 pub fn formatMetrics(buf: []u8) MetricsError!usize {
     // 确保桶已初始化
-    if (!buckets_initialized) initLatencyBuckets();
+    if (!buckets_initialized.load(.acquire)) initLatencyBuckets();
 
     const http = http_requests_total.load(.acquire);
     const auth = auth_failures_total.load(.acquire);

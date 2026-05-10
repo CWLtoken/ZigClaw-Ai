@@ -1,7 +1,6 @@
 // src/integration_p8.zig
 // ZigClaw V2.4 Phase8 | WriteV to temporary file via real io_uring
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const io_uring = @import("io_uring.zig");
 
 test "Phase8: WriteV to /tmp/zigclaw_p8_test via real io_uring" {

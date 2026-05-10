@@ -5,7 +5,6 @@
 //   2. PQ 量化可逆性 (MSE < 0.1)
 //   3. 容量限制 (MAX_VECTORS)
 
-const std = @import("std");
 const vi = @import("vector_index.zig");
 const DIM = vi.DIM;
 const MAX_VECTORS = vi.MAX_VECTORS;
@@ -37,27 +36,27 @@ test "P54-1: add + search 有效性 — 4个已知向量精确检索" {
     try index.add(300, &v2);
     try index.add(400, &v3);
 
-    std.debug.assert(index.len == 4);
+    @import("std").debug.assert(index.len == 4);
 
     // 搜索与 v0 完全一致的查询
     var q0: [DIM]f32 = [_]f32{0} ** DIM;
     q0[0] = 1.0;
     const results0 = index.search(&q0, 4);
-    std.debug.assert(results0[0] == 100); // 最近邻必须是 v0
+    @import("std").debug.assert(results0[0] == 100); // 最近邻必须是 v0
 
     // 搜索与 v2 完全一致的查询
     var q2: [DIM]f32 = [_]f32{0} ** DIM;
     q2[100] = 1.0;
     const results2 = index.search(&q2, 4);
-    std.debug.assert(results2[0] == 300); // 最近邻必须是 v2
+    @import("std").debug.assert(results2[0] == 300); // 最近邻必须是 v2
 
     // 搜索与 v3 完全一致的查询
     var q3: [DIM]f32 = [_]f32{0} ** DIM;
     q3[200] = 1.0;
     const results3 = index.search(&q3, 4);
-    std.debug.assert(results3[0] == 400); // 最近邻必须是 v3
+    @import("std").debug.assert(results3[0] == 400); // 最近邻必须是 v3
 
-    std.debug.print("P54-1: add + search 有效性 通过\n", .{});
+    @import("std").debug.print("P54-1: add + search 有效性 通过\n", .{});
 }
 
 // ============================================================================
@@ -87,7 +86,7 @@ test "P54-2: PQ 量化可逆性 — MSE < 0.1" {
     }
 
     // PQ 应该已训练
-    std.debug.assert(index.pq_trained);
+    @import("std").debug.assert(index.pq_trained);
 
     // 计算每个向量的 PQ 重建误差
     var total_mse: f32 = 0;
@@ -117,10 +116,10 @@ test "P54-2: PQ 量化可逆性 — MSE < 0.1" {
 
     total_mse /= 16.0; // 平均 MSE
 
-    std.debug.print("P54-2: 平均 MSE = {d:.6}\n", .{total_mse});
-    std.debug.assert(total_mse < 0.1);
+    @import("std").debug.print("P54-2: 平均 MSE = {d:.6}\n", .{total_mse});
+    @import("std").debug.assert(total_mse < 0.1);
 
-    std.debug.print("P54-2: PQ 量化可逆性 通过\n", .{});
+    @import("std").debug.print("P54-2: PQ 量化可逆性 通过\n", .{});
 }
 
 // ============================================================================
@@ -139,12 +138,12 @@ test "P54-3: 容量限制 — MAX_VECTORS 满后返回 Full" {
         try index.add(key, &v);
     }
 
-    std.debug.assert(index.len == MAX_VECTORS);
+    @import("std").debug.assert(index.len == MAX_VECTORS);
 
     // 再添加一个应该返回 error.Full
     v[0] = 999.0;
     const result = index.add(9999, &v);
-    std.debug.assert(result == error.Full);
+    @import("std").debug.assert(result == error.Full);
 
-    std.debug.print("P54-3: 容量限制 通过\n", .{});
+    @import("std").debug.print("P54-3: 容量限制 通过\n", .{});
 }

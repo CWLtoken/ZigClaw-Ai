@@ -1,7 +1,6 @@
 // src/integration_p37.zig
 // ZigClaw V2.4 Phase37 | 客服场景端到端闭环测试
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
 const async_coordinator = @import("async_coordinator.zig");
 const orchestrator = @import("orchestrator.zig");
 const sub_brain = @import("sub_brain.zig");
@@ -13,7 +12,7 @@ const Result = struct {
 };
 
 test "客服场景：文本请求 → 编排量化 → 推理 → 响应" {
-    std.debug.print("🎧 P37: 开始客服场景端到端闭环测试\n", .{});
+    @import("std").debug.print("🎧 P37: 开始客服场景端到端闭环测试\n", .{});
 
     // 1. 初始化 Coordinator
     var coordinator = async_coordinator.Coordinator.init();
@@ -46,7 +45,7 @@ test "客服场景：文本请求 → 编排量化 → 推理 → 响应" {
     try coordinator.submit(req);
     try testing.expect(coordinator.hasPending());
 
-    std.debug.print("已提交推理请求: {s}\n", .{user_input});
+    @import("std").debug.print("已提交推理请求: {s}\n", .{user_input});
 
     // 7. 模拟异步推理完成（替代真实推理引擎，用于测试）
     const mock_result = "Zig是一种注重性能、安全和可维护性的系统编程语言...";
@@ -58,11 +57,11 @@ test "客服场景：文本请求 → 编排量化 → 推理 → 响应" {
 
     try testing.expect(!coordinator.hasPending());
 
-    std.debug.print("✅ P37: 客服场景闭环测试通过\n", .{});
+    @import("std").debug.print("✅ P37: 客服场景闭环测试通过\n", .{});
 }
 
 test "客服场景：使用真实编排器（Ollama 不可用时跳过）" {
-    std.debug.print("🎧 P37: 测试真实编排器集成\n", .{});
+    @import("std").debug.print("🎧 P37: 测试真实编排器集成\n", .{});
 
     var coordinator = async_coordinator.Coordinator.init();
 
@@ -86,7 +85,7 @@ test "客服场景：使用真实编排器（Ollama 不可用时跳过）" {
     try coordinator.submit(req);
 
     // 使用真实编排器生成推理结果
-    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    var arena = @import("std").heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
 
@@ -94,7 +93,7 @@ test "客服场景：使用真实编排器（Ollama 不可用时跳过）" {
     _ = orch.register_brain(sub_brain.getImageBrainReal());
 
     const inference_result = orch.infer(alloc, req.prompt, .Text) catch |err| {
-        std.debug.print("推理失败（Ollama可能未运行）: {}\n", .{err});
+        @import("std").debug.print("推理失败（Ollama可能未运行）: {}\n", .{err});
         // Ollama 不可用时，使用 mock 结果完成测试
         _ = coordinator.complete("推理服务不可用（Ollama未运行）");
         return;
@@ -104,13 +103,13 @@ test "客服场景：使用真实编排器（Ollama 不可用时跳过）" {
     _ = coordinator.complete(inference_result.text);
 
     try testing.expect(result.len > 0);
-    std.debug.print("推理结果长度: {d}\n", .{result.len});
+    @import("std").debug.print("推理结果长度: {d}\n", .{result.len});
 
-    std.debug.print("✅ P37: 真实编排器集成测试通过\n", .{});
+    @import("std").debug.print("✅ P37: 真实编排器集成测试通过\n", .{});
 }
 
 test "客服场景：图像模态请求（mock）" {
-    std.debug.print("🎧 P37: 测试图像模态请求\n", .{});
+    @import("std").debug.print("🎧 P37: 测试图像模态请求\n", .{});
 
     var coordinator = async_coordinator.Coordinator.init();
 
@@ -140,5 +139,5 @@ test "客服场景：图像模态请求（mock）" {
     try testing.expect(result.len > 0);
     try testing.expectEqualStrings(mock_result, result.buf[0..result.len]);
 
-    std.debug.print("✅ P37: 图像模态请求测试通过\n", .{});
+    @import("std").debug.print("✅ P37: 图像模态请求测试通过\n", .{});
 }

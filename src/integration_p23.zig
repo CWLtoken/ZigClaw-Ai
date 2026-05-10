@@ -4,9 +4,8 @@
 // 原测试还使用了复杂的 C FFI 来访问 /proc 文件系统
 // 此处简化为测试 5 轮基础状态机 Idle → HeaderRecv → BodyRecv → BodyDone
 
-const std = @import("std");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
@@ -87,8 +86,8 @@ test "P23: 简化压力测试 - 5轮状态机循环" {
     while (round < TOTAL_ROUNDS) : (round += 1) {
         try run_one_round(round);
         if (round % 5 == 4) {
-            std.debug.print("  Round {d}/{d} completed\n", .{ round + 1, TOTAL_ROUNDS });
+            @import("std").debug.print("  Round {d}/{d} completed\n", .{ round + 1, TOTAL_ROUNDS });
         }
     }
-    std.debug.print("✅ P23: {d} 轮状态机测试完成\n", .{TOTAL_ROUNDS});
+    @import("std").debug.print("✅ P23: {d} 轮状态机测试完成\n", .{TOTAL_ROUNDS});
 }
