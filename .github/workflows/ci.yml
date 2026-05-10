@@ -28,7 +28,10 @@ jobs:
         echo "/tmp/zig" >> $GITHUB_PATH
 
     - name: Build
-      run: zig build 2>&1
+      run: zig build -Doptimize=ReleaseSafe 2>&1
+
+    - name: CI static rules check
+      run: bash scripts/ci_check.sh
 
     - name: Test
-      run: zig test src/tests.zig src/image_feature.c -OReleaseSafe --library c 2>&1
+      run: zig build test 2>&1

@@ -5,10 +5,7 @@
 const debug = @import("std").debug;
 const fmt = @import("std").fmt;
 const mem = @import("std").mem;
-const builtin = @import("builtin");
-const c = @cImport({
-    @cInclude("time.h");
-});
+const linux = @import("std").os.linux;
 
 /// 全局请求ID计数器（原子操作，无锁）
 /// 使用 fetchAdd 保证多线程安全（虽然当前单线程）
@@ -22,22 +19,18 @@ pub const RequestContext = struct {
     method: []const u8,         // HTTP方法（切片引用，不拷贝）
     path: []const u8,           // 请求路径（切片引用）
     auth_token_hash: ?u64,      // Authorization token哈希（可选）
-    
+
     /// 生成新的请求上下文（自动分配唯一ID）
     pub fn init(method: []const u8, path: []const u8, tenant_id: u64) RequestContext {
         // 原子递增，返回新值（旧值+1）
         const old_id = @atomicRmw(u64, &global_request_id, .Add, 1, .seq_cst);
         const id = old_id + 1;
-        
-        // 使用 C 的 clock_gettime 获取单调时间（毫秒）
-        var ts: c.struct_timespec = undefined;
-        const rc = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
-        var timestamp_ms: i64 = 0;
-        if (rc == 0) {
-            timestamp_ms = @as(i64, @intCast(ts.tv_sec)) * 1000 +
-                          @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
-        }
-        
+
+        // POSIX clock_gettime（毫秒），Zig 0.16 兼容
+        var ts: linux.timespec = undefined;
+        _ = linux.clock_gettime(linux.CLOCK.REALTIME, &ts);
+        const timestamp_ms: i64 = @as(i64, @intCast(ts.sec)) * 1000 + @as(i64, @intCast(@divTrunc(ts.nsec, 1_000_000)));
+
         return .{
             .id = id,
             .tenant_id = tenant_id,
@@ -47,12 +40,12 @@ pub const RequestContext = struct {
             .auth_token_hash = null,
         };
     }
-    
+
     /// 设置鉴权token哈希
     pub fn setAuthToken(self: *RequestContext, token_hash: u64) void {
         self.auth_token_hash = token_hash;
     }
-    
+
     /// 格式化请求ID为字符串（写入给定缓冲区，零分配）
     /// 返回写入的字节数
     /// P0修复：显式错误处理，消灭 catch unreachable
@@ -60,7 +53,7 @@ pub const RequestContext = struct {
         const result = fmt.bufPrint(buf, "REQ-{d}", .{self.id}) catch return error.BufferTooSmall;
         return @intCast(result.len);
     }
-    
+
     /// 获取格式化后的请求ID（临时缓冲区版本，调用者需确保生命周期）
     pub fn getFormattedId(self: *const RequestContext) [32]u8 {
         var buf: [32]u8 = undefined;
@@ -96,10 +89,10 @@ pub fn getRequestCount() u64 {
 
 test "P47: RequestContext 初始化和ID唯一性" {
     resetRequestCounter();
-    
+
     const ctx1 = RequestContext.init("POST", "/v1/infer", 0);
     const ctx2 = RequestContext.init("GET", "/health", 0);
-    
+
     debug.assert(ctx1.id == 1);
     debug.assert(ctx2.id == 2);
     debug.assert(ctx1.id != ctx2.id);
@@ -108,11 +101,11 @@ test "P47: RequestContext 初始化和ID唯一性" {
 
 test "P47: RequestContext 格式化ID" {
     resetRequestCounter();
-    
+
     const ctx = RequestContext.init("POST", "/v1/infer", 0);
     var buf: [32]u8 = undefined;
     const len = try ctx.formatId(&buf);
-    
+
     // 检查格式：REQ-1
     debug.assert(len >= 5); // "REQ-1" 至少5字节
     debug.assert(mem.eql(u8, buf[0..4], "REQ-"));
@@ -121,10 +114,10 @@ test "P47: RequestContext 格式化ID" {
 
 test "P47: RequestContext 鉴权Token设置" {
     resetRequestCounter();
-    
+
     var ctx = RequestContext.init("POST", "/v1/infer", 0);
     debug.assert(ctx.auth_token_hash == null);
-    
+
     ctx.setAuthToken(12345);
     debug.assert(ctx.auth_token_hash.? == 12345);
     debug.print("P47: Token哈希设置测试通过\n", .{});
@@ -132,11 +125,11 @@ test "P47: RequestContext 鉴权Token设置" {
 
 test "P47: 全局计数器递增" {
     resetRequestCounter();
-    
+
     _ = RequestContext.init("GET", "/health", 0);
     _ = RequestContext.init("GET", "/health", 0);
     _ = RequestContext.init("GET", "/health", 0);
-    
+
     const count = getRequestCount();
     debug.assert(count == 3);
     debug.print("P47: 全局计数器测试通过，count={d}\n", .{count});

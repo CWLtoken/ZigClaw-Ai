@@ -35,6 +35,15 @@ pub const LayerMetrics = union(Layer) {
     storage:        StorageMetrics,
 };
 
+/// 全量指标快照（所有层的指标聚合，非 union，可同时持有所有层）
+pub const AllMetrics = struct {
+    entry:          EntryMetrics,
+    orchestrator:   OrchMetrics,
+    execution:      ExecMetrics,
+    router:         RouterMetrics,
+    storage:        StorageMetrics,
+};
+
 pub const EntryMetrics = struct {
     request_count:      u64,
     error_count:        u64,

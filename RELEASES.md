@@ -1,7 +1,117 @@
-# ZigClaw 开发阶段演进日志
+# ZigClaw 发布说明
 
-> 按 DRD / P 阶段记录的开发演进，面向开发者和未来自己。
-> 最新版本详见 [RELEASES.md](../RELEASES.md)。
+> 按正式版本号组织的发布历史，包含特性、架构、基线和升级注意事项。
+
+---
+
+## v6.9.1-milestone（当前）
+
+- **测试基线**：153/153 全绿 ✅
+- **标签**：`v6.9.1-milestone-all-issues-fixed`（agent 分支）
+- **核心变更**：
+  - F2：二进制指标协议（`ibus.formatBinaryMetrics()` — 长度前缀+字段ID帧流，sidecar 可转 Prometheus/OTLP）
+  - F3：更严格 comptime 合约（`ContractVerifier.checkFnSignature()` — 返回类型+参数数量+参数类型完整检查）
+  - 军规合规修复：`main.zig`/`http_log.zig` 整包导入消除，`reactor.zig` catch{} → 显式错误处理
+  - CI 强化：工作流接入 `ci_check.sh`（4 条静态规则），M4-1/M4-2/M4-3/M4-4 全部升级
+  - 文档整理：`docs/index.md` 新增文档导航，`docs/architecture-analysis.md` 归档
+  - `integration_p13.zig` BOM 字符清除
+- **架构师评估**："军规合规度从 85% → 95%，CI 从 70% → 90%，达到准发布级别"
+
+---
+
+## v6.9.0-f2f3
+
+- **测试基线**：148/148 全绿 ✅
+- **标签**：`v6.9.0-f2f3-binary-protocol-and-strict-contracts`（agent 分支）
+- **核心变更**：
+  - F2：二进制指标协议（`FieldId` 枚举 + `writeU64Frame`/`writeU32Frame`/`formatBinaryMetrics()`）
+  - F3：`ContractVerifier` 升级为完整签名验证（`retTypeMatches` error union 兼容 + Self 指针检测）
+  - `interface.zig` 契约定义对齐实际签名（`orchestrate` 增加 `seq` 参数）
+  - `readMetrics()` 返回类型从 `LayerMetrics` union → `AllMetrics` struct
+  - `init()` 显式初始化所有字段
+  - 新增 `integration_p59.zig`（5 个二进制协议测试）+ `integration_p60.zig`（5 个合约验证测试）
+
+---
+
+## v6.8.1-lts
+
+- **测试基线**：144/144 全绿 ✅
+- **标签**：`v6.8.1-lts`（agent 分支）
+- **核心变更**：
+  - P0-1：整包导入消除（47 个文件精确子导入）
+  - P1-1：metrics.zig 原子化（`buckets_initialized` → `atomic.Value(bool)`）
+  - P1-2：ibus.zig 迁移到 LayerMetrics（DRD-058）
+  - 新增 `docs/ci_code_review.md`（6 条 CI 静态规则）
+  - 新增 `docs/changelog_atomic_migration.md`（完整变更日志）
+- **架构师评估**："从架构师视角看，当前主分支在 Zig 0.16 军规下已经非常干净"
+
+---
+
+## v6.4.0-v3-final
+
+# ZigClaw v3.0 封板归档总结
+
+**日期**：2026-05-08
+**最终标签**：v6.4.0-v3-final
+**测试基线**：136/136 全绿
+
+---
+
+## 一、归档范围
+
+从 v6.0.3-lts（维护模式基线）到 v6.4.0-v3-final，涵盖 DRD-056 至 DRD-060 全部交付。
+
+## 二、交付清单
+
+| DRD | 版本 | 内容 | 状态 |
+|-----|------|------|------|
+| DRD-056 | v6.1.0 | V1 多策略路由 + V6 多租户上下文 | ✅ |
+| DRD-057 | v6.2.0 | V2 IVF+PQ 向量索引 | ✅ |
+| DRD-058 | v6.2.0 | V3 IBus 内省总线 | ✅ |
+| DRD-059 | v6.3.0 | V4 SimpleLearner + V5 FileStore | ✅ |
+| DRD-060 | v6.4.0 | v3.0 最终封板 | ✅ |
+
+## 三、代码统计
+
+- **源文件**：91 个 .zig 文件（src/）
+- **测试**：136 个（内联 + 集成）
+- **新增文件**（v3.0）：
+  - route_table.zig, context.zig, middleware.zig
+  - vector_index.zig, ibus.zig
+  - feedback_engine.zig, file_store.zig
+  - integration_p52.zig ~ integration_p57.zig
+- **修改文件**：http_server.zig, tests.zig, README.md
+
+## 四、架构快照
+
+六层静态分层，91 个源文件，零第三方依赖，全静态分配核心路径。
+
+## 五、归档位置
+
+| 类型 | 位置 |
+|------|------|
+| 代码仓库 | github.com/CWLtoken/ZigClaw-AI (branch: agent) |
+| 本地仓库 | /workspace/ZigClaw-AI/ |
+| 开发技能 | /root/.hermes/skills/zigclaw/ (8 个技能) |
+| GBrain 知识库 | slug: zigclaw-v3.0-final-archive |
+| OpenSpace 技能 | zigclaw-v3.0-final-archive (本地，待 API Key 上传) |
+
+## 六、后续行动
+
+- Zig 0.17 发布后评估 TLS/HTTPS 接入
+- GBrain embed 生成中（job #34）
+- 技能上传 OpenSpace 需配置 OPENSPACE_API_KEY
+
+---
+
+*v3.0 正式归档。Zig 0.17 再见。*
+
+
+---
+
+## v5.8-final（归档）
+
+# ZigClaw v2.4 Changelog
 
 ## [v5.4-p41-observability] - 2026-05-06
 
@@ -231,3 +341,4 @@ ZigClaw v2.4 完成从阶段0到阶段16的功能开发，实现高性能异步H
 
 ---
 **ZigClaw v2.4 进入归档状态。等待 Zig 0.17 标准库稳定后继续演进。**
+

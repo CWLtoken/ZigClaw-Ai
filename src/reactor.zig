@@ -2,6 +2,7 @@
 // 执行层 | Layer: Execution
 // ZigClaw V2.4 Phase5 | SPSC hardware isolation | buf_ptr blood pointer | Zig 0.16 typeInfo guard
 const io_uring = @import("io_uring.zig");
+const log = @import("std").log;
 
 pub const Event = union(enum) {
     IoComplete: struct {
@@ -108,7 +109,12 @@ pub const Reactor = struct {
     /// 从 CQ 获取完成事件（自动 flush 挂起的 SQE）
     pub fn poll(self: *Reactor) Event {
         // 进入 poll 前，先 flush 所有挂起的 SQE
-        self.flush() catch {};
+        // 军规：flush 失败时继续执行（poll 仍可返回 Idle），但必须显式处理
+        self.flush() catch |flush_err| {
+            // flush 失败意味着内核提交失败，记录后继续
+            // 不 panic，不 unreachable，不空 catch
+            log.warn("Reactor.poll: flush failed: {s}", .{@errorName(flush_err)});
+        };
 
         const cq_head = @atomicLoad(u32, self.ring.cq_head, .acquire);
         const cq_tail = @atomicLoad(u32, self.ring.cq_tail, .acquire);

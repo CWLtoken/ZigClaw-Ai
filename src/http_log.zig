@@ -1,12 +1,9 @@
 // src/http_log.zig
 // 入口层 | Layer: Entry
 // 结构化JSON请求日志（无堆分配，手工拼接）
-
 const debug = @import("std").debug;
 const fmt = @import("std").fmt;
-const c = @cImport({
-    @cInclude("stdio.h");
-});
+const linux = @import("std").os.linux;
 
 /// 日志请求信息到stdout（JSON格式，无堆分配）
 /// 必须在请求处理完成后调用（响应已发送）
@@ -20,38 +17,40 @@ pub fn logRequest(
 ) void {
     // 栈上缓冲区（足够容纳JSON日志）
     var buf: [512]u8 = undefined;
-    
+
     // 构建JSON字符串
-    const result = if (err_msg) |msg| 
+    const result = if (err_msg) |msg|
         fmt.bufPrint(&buf, "{{\"req_id\":{d},\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"latency_ms\":{d:.1},\"error\":\"{s}\"}}\n", .{ req_id, method, path, status, latency_ms, msg })
     else
         fmt.bufPrint(&buf, "{{\"req_id\":{d},\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"latency_ms\":{d:.1},\"error\":null}}\n", .{ req_id, method, path, status, latency_ms });
-    
+
     const json = result catch {
-        // 缓冲区不足，输出简化版
-        _ = c.printf("{\"req_id\":%llu,\"error\":\"buffer_overflow\"}\n", req_id);
+        // 缓冲区不足，输出简化版（先解包 bufPrint 结果再拼接）
+        const n = fmt.bufPrint(&buf, "{d}", .{req_id}) catch return;
+        _ = linux.write(linux.STDOUT_FILENO, "{\"req_id\":", 11);
+        _ = linux.write(linux.STDOUT_FILENO, n.ptr, n.len);
+        const suffix = ",\"error\":\"buffer_overflow\"}\n";
+        _ = linux.write(linux.STDOUT_FILENO, suffix, suffix.len);
         return;
     };
-    
-    // 使用 C 的 printf 输出到 stdout
-    _ = c.printf("%s", json.ptr);
+
+    // 使用 POSIX write 输出到 stdout (fd=1)
+    _ = linux.write(linux.STDOUT_FILENO, json.ptr, json.len);
 }
 
 // 单元测试（P50）
-const std_debug = debug;
-
 test "P50: logRequest 正常请求" {
     // 捕获输出不太容易，这里主要测试不会panic
     logRequest(42, "POST", "/v1/infer", 200, 12.5, null);
-    std_debug.print("P50: 正常请求日志测试通过\n", .{});
+    debug.print("P50: 正常请求日志测试通过\n", .{});
 }
 
 test "P50: logRequest 鉴权失败" {
     logRequest(43, "POST", "/v1/infer", 401, 0.0, "unauthorized");
-    std_debug.print("P50: 鉴权失败日志测试通过\n", .{});
+    debug.print("P50: 鉴权失败日志测试通过\n", .{});
 }
 
 test "P50: logRequest 错误信息含特殊字符" {
     logRequest(44, "GET", "/health", 200, 1.0, "error with quotes");
-    std_debug.print("P50: 特殊字符日志测试通过\n", .{});
+    debug.print("P50: 特殊字符日志测试通过\n", .{});
 }
