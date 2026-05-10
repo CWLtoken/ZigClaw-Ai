@@ -2,9 +2,9 @@
 // 入口层 | Layer: Entry
 // Bearer Token 鉴权中间件 — 零堆分配，直接比较常量字符串
 
-const std = @import("std");
-const mem = std.mem;
-const debug = std.debug;
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
+const mem = @import("std").mem;
 
 /// 有效 Token 常量（零拷贝引用）
 const VALID_TOKEN: []const u8 = "secret-token-123";
@@ -58,7 +58,7 @@ pub fn checkAuthWithTenant(headers: []const u8) AuthResult {
     // 提取 X-Tenant-ID
     var tenant_id: u64 = 0;
     if (extractHeader(headers, "X-Tenant-ID")) |tid_str| {
-        tenant_id = std.fmt.parseInt(u64, tid_str, 10) catch 0;
+        tenant_id = fmt.parseInt(u64, tid_str, 10) catch 0;
     }
     return .{ .allowed = allowed, .tenant_id = tenant_id };
 }

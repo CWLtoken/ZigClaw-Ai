@@ -2,7 +2,8 @@
 // 入口层 | Layer: Entry
 // 结构化JSON请求日志（无堆分配，手工拼接）
 
-const std = @import("std");
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
 const c = @cImport({
     @cInclude("stdio.h");
 });
@@ -22,9 +23,9 @@ pub fn logRequest(
     
     // 构建JSON字符串
     const result = if (err_msg) |msg| 
-        std.fmt.bufPrint(&buf, "{{\"req_id\":{d},\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"latency_ms\":{d:.1},\"error\":\"{s}\"}}\n", .{ req_id, method, path, status, latency_ms, msg })
+        fmt.bufPrint(&buf, "{{\"req_id\":{d},\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"latency_ms\":{d:.1},\"error\":\"{s}\"}}\n", .{ req_id, method, path, status, latency_ms, msg })
     else
-        std.fmt.bufPrint(&buf, "{{\"req_id\":{d},\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"latency_ms\":{d:.1},\"error\":null}}\n", .{ req_id, method, path, status, latency_ms });
+        fmt.bufPrint(&buf, "{{\"req_id\":{d},\"method\":\"{s}\",\"path\":\"{s}\",\"status\":{d},\"latency_ms\":{d:.1},\"error\":null}}\n", .{ req_id, method, path, status, latency_ms });
     
     const json = result catch {
         // 缓冲区不足，输出简化版
@@ -37,7 +38,7 @@ pub fn logRequest(
 }
 
 // 单元测试（P50）
-const std_debug = std.debug;
+const std_debug = debug;
 
 test "P50: logRequest 正常请求" {
     // 捕获输出不太容易，这里主要测试不会panic

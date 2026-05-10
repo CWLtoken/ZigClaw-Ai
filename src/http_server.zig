@@ -1,8 +1,12 @@
 // src/http_server.zig
 // ZigClaw V2.4 | 阶段23C | 故障恢复与可观测性
-const std = @import("std");
+const atomic = @import("std").atomic;
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
+const heap = @import("std").heap;
+const mem = @import("std").mem;
+const StringHashMap = @import("std").StringHashMap;
 const io_uring = @import("io_uring.zig");
-const mem = std.mem;
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
@@ -15,16 +19,16 @@ const c = @cImport({
 // 服务器指标（原子操作保证线程安全）
 pub const ServerMetrics = struct {
     uptime_start: i64,           // 启动时间戳（毫秒）— 简化版：暂时为0
-    total_requests: std.atomic.Value(u64),
-    active_connections: std.atomic.Value(u32),
-    error_count: std.atomic.Value(u64),
+    total_requests: atomic.Value(u64),
+    active_connections: atomic.Value(u32),
+    error_count: atomic.Value(u64),
     
     pub fn init() ServerMetrics {
         return ServerMetrics{
             .uptime_start = 0, // 简化：暂时不使用真实时间戳
-            .total_requests = std.atomic.Value(u64).init(0),
-            .active_connections = std.atomic.Value(u32).init(0),
-            .error_count = std.atomic.Value(u64).init(0),
+            .total_requests = atomic.Value(u64).init(0),
+            .active_connections = atomic.Value(u32).init(0),
+            .error_count = atomic.Value(u64).init(0),
         };
     }
     
@@ -78,7 +82,7 @@ const HttpRequest = struct {
     method: []const u8,
     path: []const u8,
     query: ?[]const u8,
-    headers: std.StringHashMap([]const u8),
+    headers: StringHashMap([]const u8),
     body: []const u8,
 
     fn deinit(self: *HttpRequest) void {
@@ -90,14 +94,14 @@ const HttpRequest = struct {
 const HttpResponse = struct {
     status_code: u16,
     status_text: []const u8,
-    headers: std.StringHashMap([]const u8),
+    headers: StringHashMap([]const u8),
     body: []const u8,
 
     fn init() HttpResponse {
         return HttpResponse{
             .status_code = 200,
             .status_text = "OK",
-            .headers = std.StringHashMap([]const u8).init(std.heap.page_allocator),
+            .headers = StringHashMap([]const u8).init(heap.page_allocator),
             .body = "",
         };
     }
@@ -112,8 +116,8 @@ pub const HttpServer = struct {
     listen_fd: i32,
     port: u16,
     metrics: *ServerMetrics,  // 服务器指标
-    running: std.atomic.Value(bool),  // 优雅关闭标志
-    shutting_down: std.atomic.Value(bool),  // 优雅关闭探针（阶段27）
+    running: atomic.Value(bool),  // 优雅关闭标志
+    shutting_down: atomic.Value(bool),  // 优雅关闭探针（阶段27）
 
     /// 初始化 HTTP 服务器
     pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
@@ -142,11 +146,11 @@ pub const HttpServer = struct {
         try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
         const port = io_uring.htons(actual_addr.port);
 
-        std.debug.print("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/\n", .{port});
-        std.debug.print("   路由：\n", .{});
-        std.debug.print("     GET /health → 健康检查\n", .{});
-        std.debug.print("     GET /health?verbose=true → 详细指标\n", .{});
-        std.debug.print("     GET /infer?input=xxx&modality=text|image → 推理\n", .{});
+        debug.print("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/\n", .{port});
+        debug.print("   路由：\n", .{});
+        debug.print("     GET /health → 健康检查\n", .{});
+        debug.print("     GET /health?verbose=true → 详细指标\n", .{});
+        debug.print("     GET /infer?input=xxx&modality=text|image → 推理\n", .{});
 
         // 取消 errdefer，因为要返回这些资源
         return HttpServer{
@@ -154,8 +158,8 @@ pub const HttpServer = struct {
             .listen_fd = listen_fd,
             .port = port,
             .metrics = metrics,
-            .running = std.atomic.Value(bool).init(true),
-            .shutting_down = std.atomic.Value(bool).init(false),  // 阶段27：优雅关闭探针
+            .running = atomic.Value(bool).init(true),
+            .shutting_down = atomic.Value(bool).init(false),  // 阶段27：优雅关闭探针
         };
     }
 
@@ -165,7 +169,7 @@ pub const HttpServer = struct {
             // 检查是否应该停止接受新连接
             if (!self.is_running()) break;
 
-            std.debug.print("等待连接...\n", .{});
+            debug.print("等待连接...\n", .{});
 
             // 使用 io_uring ACCEPT 获取连接
             const conn_fd = io_uring.Syscall.accept(self.listen_fd, null, null) catch |err| {
@@ -177,12 +181,12 @@ pub const HttpServer = struct {
             // 更新活跃连接数
             self.metrics.inc_connections();
 
-            std.debug.print("收到连接，fd={d}\n", .{conn_fd});
+            debug.print("收到连接，fd={d}\n", .{conn_fd});
 
             // 读取 HTTP 请求
             var buf: [8192]u8 = undefined;
             const nread = io_uring.Syscall.recv(conn_fd, &buf, buf.len, 0) catch |err| {
-                std.debug.print("读取请求失败: {}\n", .{err});
+                debug.print("读取请求失败: {}\n", .{err});
                 io_uring.Syscall.close(@intCast(conn_fd));
                 self.metrics.dec_connections();
                 continue;
@@ -200,12 +204,12 @@ pub const HttpServer = struct {
             const request_bytes = buf[0..@intCast(nread)];
 
             // 解析 HTTP 请求（简化版）
-            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            var arena = heap.ArenaAllocator.init(heap.page_allocator);
             defer arena.deinit();
             const alloc = arena.allocator();
 
             var req = parseHttpRequest(alloc, request_bytes) catch |err| {
-                std.debug.print("解析请求失败: {}\n", .{err});
+                debug.print("解析请求失败: {}\n", .{err});
                 sendErrorResponse(conn_fd, 400, "Bad Request") catch {};
                 io_uring.Syscall.close(@intCast(conn_fd));
                 self.metrics.dec_connections();
@@ -214,16 +218,16 @@ pub const HttpServer = struct {
             };
             defer req.deinit();
 
-        std.debug.print("请求: {s} {s}\n", .{req.method, req.path});
+        debug.print("请求: {s} {s}\n", .{req.method, req.path});
 
         // 生成请求上下文（原子ID，零分配）
         // 从 X-Tenant-ID 头部提取租户 ID（v6.1.0）
         var tenant_id: u64 = 0;
         if (req.headers.get("X-Tenant-ID")) |tid_str| {
-            tenant_id = std.fmt.parseInt(u64, tid_str, 10) catch 0;
+            tenant_id = fmt.parseInt(u64, tid_str, 10) catch 0;
         }
         var ctx = context.RequestContext.init(req.method, req.path, tenant_id);
-        std.debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
+        debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
         
         // P50: 日志相关变量
         var status_code: u16 = 0;
@@ -238,7 +242,7 @@ pub const HttpServer = struct {
                 const shutting_down = self.shutting_down.load(.acquire);
                 status_code = 200;
                 handleHealth(self.metrics, shutting_down, conn_fd, req.query) catch |err| {
-                    std.debug.print("处理 /health 失败: {}\n", .{err});
+                    debug.print("处理 /health 失败: {}\n", .{err});
                     status_code = 500;
                 };
         } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
@@ -275,7 +279,7 @@ pub const HttpServer = struct {
             const ibus_body = ibus_buf[0..ibus_len];
 
             var hdr_buf: [256]u8 = undefined;
-            const header = std.fmt.bufPrint(&hdr_buf,
+            const header = fmt.bufPrint(&hdr_buf,
                 "HTTP/1.1 200 OK\r\n" ++
                 "Content-Type: application/json\r\n" ++
                 "Content-Length: {d}\r\n" ++
@@ -303,7 +307,7 @@ pub const HttpServer = struct {
                 self.metrics.dec_connections();
                 continue;
             };
-            const response = std.fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
+            const response = fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
                 "Content-Type: text/plain; version=0.0.4\r\n" ++
                 "Content-Length: {d}\r\n" ++
                 "Connection: close\r\n" ++
@@ -316,7 +320,7 @@ pub const HttpServer = struct {
                 continue;
             };
             _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
-                std.debug.print("发送/metrics响应失败: {}\n", .{err});
+                debug.print("发送/metrics响应失败: {}\n", .{err});
             };
         } else {
                 status_code = 404;
@@ -333,7 +337,7 @@ pub const HttpServer = struct {
             self.metrics.dec_connections();
         }
 
-        std.debug.print("服务器停止接受新连接\n", .{});
+        debug.print("服务器停止接受新连接\n", .{});
     }
 
     /// 检查服务器是否正在运行
@@ -355,8 +359,8 @@ pub const HttpServer = struct {
 };
 
 /// 解析 HTTP 请求
-fn parseHttpRequest(alloc: std.mem.Allocator, raw: []const u8) !HttpRequest {
-    var headers = std.StringHashMap([]const u8).init(alloc);
+fn parseHttpRequest(alloc: mem.Allocator, raw: []const u8) !HttpRequest {
+    var headers = StringHashMap([]const u8).init(alloc);
 
     // 解析请求行
     const first_line_end = mem.indexOf(u8, raw, "\r\n") orelse return error.InvalidRequest;
@@ -417,13 +421,13 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
         const errors = metrics.get_error_count();
 
         var body_buf: [512]u8 = undefined;
-        const body = try std.fmt.bufPrint(&body_buf,
+        const body = try fmt.bufPrint(&body_buf,
             "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}}",
             .{ uptime_ms, total_requests, active, errors, shutting_down }
         );
 
         var resp_buf: [1024]u8 = undefined;
-        const response = try std.fmt.bufPrint(&resp_buf,
+        const response = try fmt.bufPrint(&resp_buf,
             "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: application/json\r\n" ++
             "Content-Length: {d}\r\n" ++
@@ -433,14 +437,14 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
         );
 
         _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
-            std.debug.print("发送详细健康响应失败: {}\n", .{err});
+            debug.print("发送详细健康响应失败: {}\n", .{err});
             return;
         };
     } else {
         // 简单模式（栈缓冲区，零堆分配）
         const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
         var resp_buf: [512]u8 = undefined;
-        const response = std.fmt.bufPrint(&resp_buf,
+        const response = fmt.bufPrint(&resp_buf,
             "HTTP/1.1 200 OK\r\n" ++
             "Content-Type: application/json\r\n" ++
             "Content-Length: {d}\r\n" ++
@@ -453,12 +457,12 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
         };
 
         _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
-            std.debug.print("发送健康响应失败: {}\n", .{err});
+            debug.print("发送健康响应失败: {}\n", .{err});
             return;
         };
     }
 
-    std.debug.print("/health 请求处理完成 (verbose={})\n", .{verbose});
+    debug.print("/health 请求处理完成 (verbose={})\n", .{verbose});
 }
 
 // 推理功能已移至 http_protocol.zig（阶段23B 封板）
@@ -466,7 +470,7 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
 /// 发送错误响应（栈缓冲区，零堆分配）
 fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void {
     var buf: [512]u8 = undefined;
-    const response = std.fmt.bufPrint(&buf,
+    const response = fmt.bufPrint(&buf,
         "HTTP/1.1 {d} {s}\r\n" ++
         "Content-Type: text/plain\r\n" ++
         "Content-Length: {d}\r\n" ++
@@ -476,7 +480,7 @@ fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void 
     ) catch {
         // 缓冲区不足，截断消息
         const truncated = message[0..@min(message.len, 256)];
-        const fallback = std.fmt.bufPrint(&buf,
+        const fallback = fmt.bufPrint(&buf,
             "HTTP/1.1 {d} {s}\r\n" ++
             "Content-Type: text/plain\r\n" ++
             "Connection: close\r\n" ++

@@ -45,11 +45,11 @@ pub const HeatPool = struct {
 };
 
 // 单元测试（P42）
-const std = @import("std");
+const debug = @import("std").debug;
 test "P42: HeatPool 初始化全零" {
     const pool = HeatPool.init();
     for (0..HEAT_POOL_SIZE) |i| {
-        std.debug.assert(pool.get_heat(i) == 0);
+        debug.assert(pool.get_heat(i) == 0);
     }
 }
 
@@ -57,8 +57,8 @@ test "P42: HeatPool 更新热度 - 访问递增" {
     var pool = HeatPool.init();
     const slot: usize = 5;
     _ = pool.update_heat(slot, true);
-    std.debug.print("访问后热度: {d}\n", .{pool.get_heat(slot)});
-    std.debug.assert(pool.get_heat(slot) > 0);
+    debug.print("访问后热度: {d}\n", .{pool.get_heat(slot)});
+    debug.assert(pool.get_heat(slot) > 0);
 }
 
 test "P42: HeatPool 更新热度 - 未访问衰减" {
@@ -68,6 +68,6 @@ test "P42: HeatPool 更新热度 - 未访问衰减" {
     const after_access = pool.get_heat(slot);
     _ = pool.update_heat(slot, false); // 未访问，衰减
     const after_decay = pool.get_heat(slot);
-    std.debug.print("衰减前: {d}, 衰减后: {d}\n", .{ after_access, after_decay });
-    std.debug.assert(after_decay <= after_access);
+    debug.print("衰减前: {d}, 衰减后: {d}\n", .{ after_access, after_decay });
+    debug.assert(after_decay <= after_access);
 }

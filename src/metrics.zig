@@ -2,7 +2,9 @@
 // 观测层 | Layer: Observability
 // 无锁原子指标收集，用于 Prometheus 格式导出
 
-const std = @import("std");
+const atomic = @import("std").atomic;
+const builtin = @import("std").builtin;
+const fmt = @import("std").fmt;
 
 // ============================================================================
 // 缓存行对齐的原子变量包装（P2-1：伪共享消除）
@@ -13,26 +15,26 @@ const CACHE_LINE = 64;
 /// 缓存行对齐的原子 u64：强制独占 64 字节缓存行，消除伪共享
 /// 每个原子变量单独对齐，防止多核/多线程下相邻变量共享缓存行导致性能下降
 pub const AlignedAtomicU64 = struct {
-    value: std.atomic.Value(u64) align(CACHE_LINE),
-    _pad: [CACHE_LINE - @sizeOf(std.atomic.Value(u64))]u8 = undefined,
+    value: atomic.Value(u64) align(CACHE_LINE),
+    _pad: [CACHE_LINE - @sizeOf(atomic.Value(u64))]u8 = undefined,
 
     pub fn init(v: u64) AlignedAtomicU64 {
-        return .{ .value = std.atomic.Value(u64).init(v) };
+        return .{ .value = atomic.Value(u64).init(v) };
     }
 
-    pub fn load(self: *const AlignedAtomicU64, comptime order: std.builtin.AtomicOrder) u64 {
+    pub fn load(self: *const AlignedAtomicU64, comptime order: builtin.AtomicOrder) u64 {
         return self.value.load(order);
     }
 
-    pub fn store(self: *AlignedAtomicU64, v: u64, comptime order: std.builtin.AtomicOrder) void {
+    pub fn store(self: *AlignedAtomicU64, v: u64, comptime order: builtin.AtomicOrder) void {
         self.value.store(v, order);
     }
 
-    pub fn fetchAdd(self: *AlignedAtomicU64, v: u64, comptime order: std.builtin.AtomicOrder) u64 {
+    pub fn fetchAdd(self: *AlignedAtomicU64, v: u64, comptime order: builtin.AtomicOrder) u64 {
         return self.value.fetchAdd(v, order);
     }
 
-    pub fn fetchSub(self: *AlignedAtomicU64, v: u64, comptime order: std.builtin.AtomicOrder) u64 {
+    pub fn fetchSub(self: *AlignedAtomicU64, v: u64, comptime order: builtin.AtomicOrder) u64 {
         return self.value.fetchSub(v, order);
     }
 };
@@ -58,14 +60,14 @@ const NUM_BUCKETS = LATENCY_BUCKETS.len + 1; // +1 for +Inf bucket
 
 // 每个桶的计数器（静态数组，在 initLatencyBuckets 中初始化）
 // WARNING: single-thread only; buckets_initialized is not atomic
-pub var infer_latency_buckets: [NUM_BUCKETS]std.atomic.Value(u64) = undefined;
+pub var infer_latency_buckets: [NUM_BUCKETS]atomic.Value(u64) = undefined;
 var buckets_initialized: bool = false;  // WARNING: not atomic, single-thread only
 
 // 初始化桶计数器（在程序启动时调用一次）
 pub fn initLatencyBuckets() void {
     if (buckets_initialized) return;
     for (&infer_latency_buckets) |*bucket| {
-        bucket.* = std.atomic.Value(u64).init(0);
+        bucket.* = atomic.Value(u64).init(0);
     }
     buckets_initialized = true;
 }
@@ -104,8 +106,8 @@ pub fn incrUringWrite() void {
 }
 
 // P49：窗口槽位使用率（占位，后续从 io_uring 获取）
-pub var uring_sq_ring_used: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
-pub var uring_cq_ring_used: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+pub var uring_sq_ring_used: atomic.Value(u32) = atomic.Value(u32).init(0);
+pub var uring_cq_ring_used: atomic.Value(u32) = atomic.Value(u32).init(0);
 
 pub fn setSqRingUsed(n: u32) void {
     uring_sq_ring_used.store(n, .release);
@@ -164,7 +166,7 @@ pub fn formatMetrics(buf: []u8) MetricsError!usize {
     for (LATENCY_BUCKETS, 0..) |boundary, i| {
         const bucket_val = infer_latency_buckets[i].load(.acquire);
         cumulative += bucket_val;
-        const line = std.fmt.bufPrint(bucket_lines[bucket_len..],
+        const line = fmt.bufPrint(bucket_lines[bucket_len..],
             "zigclaw_infer_latency_ms_bucket{{le=\"{d}\"}} {d}\n",
             .{ boundary, cumulative }) catch return MetricsError.BufferTooSmall;
         bucket_len += line.len;
@@ -172,12 +174,12 @@ pub fn formatMetrics(buf: []u8) MetricsError!usize {
     // +Inf 桶
     const inf_bucket = infer_latency_buckets[NUM_BUCKETS - 1].load(.acquire);
     cumulative += inf_bucket;
-    const inf_line = std.fmt.bufPrint(bucket_lines[bucket_len..],
+    const inf_line = fmt.bufPrint(bucket_lines[bucket_len..],
         "zigclaw_infer_latency_ms_bucket{{le=\"+Inf\"}} {d}\n",
         .{cumulative}) catch return MetricsError.BufferTooSmall;
     bucket_len += inf_line.len;
 
-    const result = std.fmt.bufPrint(buf,
+    const result = fmt.bufPrint(buf,
         \\# HELP zigclaw_http_requests_total Total HTTP requests
         \\# TYPE zigclaw_http_requests_total counter
         \\zigclaw_http_requests_total {d}

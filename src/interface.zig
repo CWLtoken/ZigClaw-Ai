@@ -10,7 +10,7 @@
 // 本文件仅为类型锚点，不实现任何逻辑。
 // 所有 VTable 函数指针均为编译期确定，无运行时间接调用开销。
 
-const std = @import("std");
+// interface.zig: 纯类型锚点，无 std 运行时依赖
 const sub_brain = @import("sub_brain.zig");
 const token = @import("token.zig");
 

@@ -13,7 +13,7 @@
 //   3. 用 ComptimeRouter(routes) 生成 dispatch 函数
 //   4. 编译期自动检测重复 op_code
 
-const std = @import("std");
+const log = @import("std").log;
 
 // ============================================================================
 // 路由上下文（显式直白，替代 *anyopaque）
@@ -71,7 +71,7 @@ pub fn ComptimeRouter(comptime routes: []const Route) type {
 /// 默认未匹配路由处理（pub，供 ComptimeRouter 调用）
 pub fn handleNotFound(ctx: *RouteContext) void {
     _ = ctx;
-    std.log.warn("[ComptimeRouter] Route not found for op_code", .{});
+    log.warn("[ComptimeRouter] Route not found for op_code", .{});
 }
 
 // ============================================================================

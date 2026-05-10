@@ -460,11 +460,11 @@ fn cosine_similarity(a: *const [DIM]f32, b: *const [DIM]f32) f32 {
 // 单元测试（P44）
 // ============================================================================
 
-const std = @import("std");
+const debug = @import("std").debug;
 
 test "P44: VectorIndex 初始化为空" {
     const index = VectorIndex.init();
-    std.debug.assert(index.len == 0);
+    debug.assert(index.len == 0);
 }
 
 test "P44: VectorIndex 添加向量和搜索" {
@@ -476,6 +476,6 @@ test "P44: VectorIndex 添加向量和搜索" {
     var query: [DIM]f32 = [_]f32{0} ** DIM;
     query[0] = 1.0;
     const results = index.search(&query, 1);
-    std.debug.assert(results[0] == 1001);
-    std.debug.print("P44: 向量索引测试通过\n", .{});
+    debug.assert(results[0] == 1001);
+    debug.print("P44: 向量索引测试通过\n", .{});
 }

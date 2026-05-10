@@ -2,7 +2,9 @@
 // 观测层 | Layer: Observability
 // 全局请求ID生成器（原子操作，零堆分配）
 
-const std = @import("std");
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
+const mem = @import("std").mem;
 const builtin = @import("builtin");
 const c = @cImport({
     @cInclude("time.h");
@@ -53,16 +55,22 @@ pub const RequestContext = struct {
     
     /// 格式化请求ID为字符串（写入给定缓冲区，零分配）
     /// 返回写入的字节数
-    pub fn formatId(self: *const RequestContext, buf: []u8) u16 {
-        // 缓冲区足够大（32字节），REQUEST-XXXX 最多不超过20字节，所以不会失败
-        const result = std.fmt.bufPrint(buf, "REQ-{d}", .{self.id}) catch unreachable;
+    /// P0修复：显式错误处理，消灭 catch unreachable
+    pub fn formatId(self: *const RequestContext, buf: []u8) error{BufferTooSmall}!u16 {
+        const result = fmt.bufPrint(buf, "REQ-{d}", .{self.id}) catch return error.BufferTooSmall;
         return @intCast(result.len);
     }
     
     /// 获取格式化后的请求ID（临时缓冲区版本，调用者需确保生命周期）
     pub fn getFormattedId(self: *const RequestContext) [32]u8 {
         var buf: [32]u8 = undefined;
-        const len = self.formatId(&buf);
+        const len = self.formatId(&buf) catch {
+            // 32字节缓冲区对 REQ-XXXX 绰绰有余，此路径理论上不可达
+            // 但不用 unreachable，而是返回安全默认值
+            var fallback: [32]u8 = undefined;
+            @memset(&fallback, 0);
+            return fallback;
+        };
         var result: [32]u8 = undefined;
         @memcpy(result[0..len], buf[0..len]);
         // 余下部分清零
@@ -84,8 +92,7 @@ pub fn getRequestCount() u64 {
 }
 
 // 单元测试（P47）
-const std_debug = std.debug;
-const mem = std.mem;
+// 使用文件级精确导入：debug, fmt, mem
 
 test "P47: RequestContext 初始化和ID唯一性" {
     resetRequestCounter();
@@ -93,10 +100,10 @@ test "P47: RequestContext 初始化和ID唯一性" {
     const ctx1 = RequestContext.init("POST", "/v1/infer", 0);
     const ctx2 = RequestContext.init("GET", "/health", 0);
     
-    std_debug.assert(ctx1.id == 1);
-    std_debug.assert(ctx2.id == 2);
-    std_debug.assert(ctx1.id != ctx2.id);
-    std_debug.print("P47: 请求ID生成测试通过，ctx1={d}, ctx2={d}\n", .{ctx1.id, ctx2.id});
+    debug.assert(ctx1.id == 1);
+    debug.assert(ctx2.id == 2);
+    debug.assert(ctx1.id != ctx2.id);
+    debug.print("P47: 请求ID生成测试通过，ctx1={d}, ctx2={d}\n", .{ctx1.id, ctx2.id});
 }
 
 test "P47: RequestContext 格式化ID" {
@@ -104,23 +111,23 @@ test "P47: RequestContext 格式化ID" {
     
     const ctx = RequestContext.init("POST", "/v1/infer", 0);
     var buf: [32]u8 = undefined;
-    const len = ctx.formatId(&buf);
+    const len = try ctx.formatId(&buf);
     
     // 检查格式：REQ-1
-    std_debug.assert(len >= 5); // "REQ-1" 至少5字节
-    std_debug.assert(mem.eql(u8, buf[0..4], "REQ-"));
-    std_debug.print("P47: ID格式化测试通过，formatted={s}\n", .{buf[0..len]});
+    debug.assert(len >= 5); // "REQ-1" 至少5字节
+    debug.assert(mem.eql(u8, buf[0..4], "REQ-"));
+    debug.print("P47: ID格式化测试通过，formatted={s}\n", .{buf[0..len]});
 }
 
 test "P47: RequestContext 鉴权Token设置" {
     resetRequestCounter();
     
     var ctx = RequestContext.init("POST", "/v1/infer", 0);
-    std_debug.assert(ctx.auth_token_hash == null);
+    debug.assert(ctx.auth_token_hash == null);
     
     ctx.setAuthToken(12345);
-    std_debug.assert(ctx.auth_token_hash.? == 12345);
-    std_debug.print("P47: Token哈希设置测试通过\n", .{});
+    debug.assert(ctx.auth_token_hash.? == 12345);
+    debug.print("P47: Token哈希设置测试通过\n", .{});
 }
 
 test "P47: 全局计数器递增" {
@@ -131,6 +138,6 @@ test "P47: 全局计数器递增" {
     _ = RequestContext.init("GET", "/health", 0);
     
     const count = getRequestCount();
-    std_debug.assert(count == 3);
-    std_debug.print("P47: 全局计数器测试通过，count={d}\n", .{count});
+    debug.assert(count == 3);
+    debug.print("P47: 全局计数器测试通过，count={d}\n", .{count});
 }

@@ -10,9 +10,10 @@
 // 架构约束：
 //   - 不动 reactor.zig / protocol.zig / io_uring.zig
 //   - 对齐 feedback.zig 中的 LayerMetrics 联合类型
-//   - 无堆：所有指标存储在 std.atomic.Value 或全局静态变量中
+//   - 无堆：所有指标存储在 atomic.Value 或全局静态变量中
 
-const std = @import("std");
+const atomic = @import("std").atomic;
+const debug = @import("std").debug;
 const feedback = @import("feedback.zig");
 
 // ============================================================================
@@ -244,7 +245,7 @@ fn printU32(buf: []u8, val: u32) usize {
 // ============================================================================
 
 pub fn emit(event_name: []const u8) void {
-    std.debug.print("[IBus] event: {s}\n", .{event_name});
+    debug.print("[IBus] event: {s}\n", .{event_name});
 }
 
 // ============================================================================

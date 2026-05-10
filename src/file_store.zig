@@ -4,7 +4,7 @@
 //
 // 设计原则：
 //   - 使用 io_uring.Syscall 的文件 I/O 方法（openat/write/read/close）
-//   - 不依赖 std.fs 高级封装
+//   - 不依赖 fs 高级封装
 //   - 所有缓冲区在栈上，零堆分配
 //   - 实现 StorageInterface 风格的 VTable 接口
 //
@@ -12,11 +12,10 @@
 //   纯二进制，直接写入 HeatPool 的 heats 数组字节表示
 //   文件路径：/tmp/zigclaw_heat_pool.bin（测试用）
 
-const std = @import("std");
+const mem = @import("std").mem;
+const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
 const heat_pool = @import("heat_pool.zig");
-const mem = std.mem;
-const os = std.os.linux;
 
 // ============================================================================
 // 文件路径常量
@@ -55,7 +54,7 @@ pub const FileStore = struct {
         var offset: usize = 0;
         while (offset < total_bytes) {
             const chunk = @min(4096, total_bytes - offset);
-            const rc = os.syscall3(
+            const rc = linux.syscall3(
                 .write,
                 @as(usize, @intCast(fd)),
                 @intFromPtr(&heats_bytes[offset]),
@@ -93,7 +92,7 @@ pub const FileStore = struct {
         var offset: usize = 0;
         while (offset < total_bytes) {
             const chunk = @min(4096, total_bytes - offset);
-            const rc = os.syscall3(
+            const rc = linux.syscall3(
                 .read,
                 @as(usize, @intCast(fd)),
                 @intFromPtr(&heats_bytes[offset]),
@@ -111,7 +110,7 @@ pub const FileStore = struct {
 
     /// 删除持久化文件（测试清理用）
     pub fn deleteFile(self: *const FileStore) void {
-        _ = os.syscall3(
+        _ = linux.syscall3(
             .unlinkat,
             @as(usize, @bitCast(@as(i64, @as(i32, -100)))),
             @intFromPtr(self.path),

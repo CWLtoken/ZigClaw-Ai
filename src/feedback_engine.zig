@@ -15,7 +15,7 @@
 //   R4: execution.syscall_fallback_count > 5 → 建议 disable_feature (direct IO fallback)
 //   R5: entry.error_count > entry.request_count * 0.05 → 建议 adjust_timeout
 
-const std = @import("std");
+const debug = @import("std").debug;
 const feedback = @import("feedback.zig");
 const ibus = @import("ibus.zig");
 
@@ -135,7 +135,7 @@ pub const SimpleLearner = struct {
 // 单元测试（inline）
 // ============================================================================
 
-const std_debug = std.debug;
+const std_debug = debug;
 
 test "SimpleLearner: 正常指标返回 null" {
     const entry = feedback.EntryMetrics{
