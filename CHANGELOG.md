@@ -1,4 +1,7 @@
-# ZigClaw v2.4 Changelog
+# ZigClaw 开发阶段演进日志
+
+> 按 DRD / P 阶段记录的开发演进，面向开发者和未来自己。
+> 最新版本详见 [RELEASES.md](../RELEASES.md)。
 
 ## [v5.4-p41-observability] - 2026-05-06
 

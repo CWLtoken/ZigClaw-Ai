@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
         .name = "zigclaw",
         .root_module = exe_mod,
     });
-    exe.linkLibC();
+    exe.root_module.link_libc = true;
 
     // -------------------------------------------------
     // 3. 测试：集成测试（P3–P58 等）
@@ -41,7 +41,7 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{
         .root_module = test_mod,
     });
-    tests.linkLibC();
+    tests.root_module.link_libc = true;
 
     const test_step = b.step("test", "Run ZigClaw integration tests");
     test_step.dependOn(&tests.step);
@@ -66,5 +66,5 @@ pub fn build(b: *std.Build) void {
     // 5. 安装步骤
     // -------------------------------------------------
     b.getInstallStep().dependOn(&exe.step);
-    b.default_step = exe.step;
+    b.default_step = &exe.step;
 }

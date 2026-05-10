@@ -1,4 +1,4 @@
-# ZigClaw v2.4 部署文档
+# ZigClaw 部署文档
 
 ## 目录
 - [容器化部署](#容器化部署)
@@ -198,6 +198,8 @@ docker inspect zigclaw | jq '.[0].State.Health'
 进入 builder 容器调试：
 ```bash
 docker-compose build --progress=plain zigclaw
+# 本地构建测试
+zig build -Doptimize=ReleaseSafe
 ```
 
 检查 Zig 版本：
@@ -242,13 +244,13 @@ docker-compose down --volumes  # 会删除 Ollama 数据！
 
 ## 版本信息
 
-- ZigClaw：v2.4 (v6.0.0-final)
+- ZigClaw：v6.9.1
 - Zig：0.16.0
 - Alpine：3.18
 - Nginx：1.25-alpine
-- Ollama：0.1.26
+- Ollama：latest
 
 ---
 
-**文档版本**：2026-05-06
-**维护者**：ZigClaw Team
+**文档版本**：2026-05-10
+**维护者**：ZigClaw Team / Hermes AI

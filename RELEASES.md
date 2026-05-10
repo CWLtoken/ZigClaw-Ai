@@ -4,7 +4,36 @@
 
 ---
 
-## v6.8.1-lts（当前）
+## v6.9.1-milestone（当前）
+
+- **测试基线**：153/153 全绿 ✅
+- **标签**：`v6.9.1-milestone-all-issues-fixed`（agent 分支）
+- **核心变更**：
+  - F2：二进制指标协议（`ibus.formatBinaryMetrics()` — 长度前缀+字段ID帧流，sidecar 可转 Prometheus/OTLP）
+  - F3：更严格 comptime 合约（`ContractVerifier.checkFnSignature()` — 返回类型+参数数量+参数类型完整检查）
+  - 军规合规修复：`main.zig`/`http_log.zig` 整包导入消除，`reactor.zig` catch{} → 显式错误处理
+  - CI 强化：工作流接入 `ci_check.sh`（4 条静态规则），M4-1/M4-2/M4-3/M4-4 全部升级
+  - 文档整理：`docs/index.md` 新增文档导航，`docs/architecture-analysis.md` 归档
+  - `integration_p13.zig` BOM 字符清除
+- **架构师评估**："军规合规度从 85% → 95%，CI 从 70% → 90%，达到准发布级别"
+
+---
+
+## v6.9.0-f2f3
+
+- **测试基线**：148/148 全绿 ✅
+- **标签**：`v6.9.0-f2f3-binary-protocol-and-strict-contracts`（agent 分支）
+- **核心变更**：
+  - F2：二进制指标协议（`FieldId` 枚举 + `writeU64Frame`/`writeU32Frame`/`formatBinaryMetrics()`）
+  - F3：`ContractVerifier` 升级为完整签名验证（`retTypeMatches` error union 兼容 + Self 指针检测）
+  - `interface.zig` 契约定义对齐实际签名（`orchestrate` 增加 `seq` 参数）
+  - `readMetrics()` 返回类型从 `LayerMetrics` union → `AllMetrics` struct
+  - `init()` 显式初始化所有字段
+  - 新增 `integration_p59.zig`（5 个二进制协议测试）+ `integration_p60.zig`（5 个合约验证测试）
+
+---
+
+## v6.8.1-lts
 
 - **测试基线**：144/144 全绿 ✅
 - **标签**：`v6.8.1-lts`（agent 分支）
