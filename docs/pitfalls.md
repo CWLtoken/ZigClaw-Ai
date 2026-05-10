@@ -121,6 +121,13 @@
 
 ---
 
+## E34: 延迟直方图 `buckets_initialized` 非原子化（2026-05-10 修复）
+
+- **现象**: `buckets_initialized: bool` 在多线程环境下出现竞争读写，导致延迟直方图可能重复初始化或计数丢失
+- **根因**: 初始代码使用普通 `bool` 而非 `atomic.Value(bool)`，`initLatencyBuckets()` 中对 `infer_latency_buckets` 数组的初始化可能与其他线程的 `observeInferLatency` 并发执行
+- **解决**: 将 `buckets_initialized` 改为 `atomic.Value(bool)`，读加 `.load(.acquire)`，写加 `.store(true, .release)`（DRD-058/P1-1）
+- **永久法则**: ✅ 任何跨线程共享的 bool/计数变量必须使用 `atomic.Value`，即使当前看似"只在一个地方写入"
+
 ## 总结：永久法则速查表
 
 | 法则 | 内容 | 优先级 |
@@ -135,7 +142,16 @@
 
 ---
 
-## E33: 运行时 C 依赖白名单（v6.5.0 新增）
+## E33: 延迟直方图 buckets_initialized 必须原子化（2026-05-10 新增）
+
+- **现象**: `buckets_initialized: bool` 在多线程环境下出现竞争读写，延迟直方图可能重复初始化或计数丢失
+- **根因**: 使用普通 `bool` 而非 `atomic.Value(bool)`，`initLatencyBuckets()` 与 `observeInferLatency` 并发执行
+- **解决**: 将 `buckets_initialized` 改为 `atomic.Value(bool)`，读加 `.load(.acquire)`，写加 `.store(true, .release)`
+- **永久法则**: ✅ 任何跨线程共享的 bool/计数变量必须使用 `atomic.Value`，即使当前看似"只在一个地方写入"
+
+---
+
+## E34: 运行时 C 依赖白名单（v6.5.0 新增）
 
 > **来源**：DRD-061 架构师审计 — "无依赖0 需要明确 0 的边界"
 

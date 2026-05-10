@@ -6,15 +6,13 @@ const fmt = @import("std").fmt;
 const heap = @import("std").heap;
 const mem = @import("std").mem;
 const StringHashMap = @import("std").StringHashMap;
+const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
 const http_log = @import("http_log.zig");
 const ibus = @import("ibus.zig");
-const c = @cImport({
-    @cInclude("time.h");
-});
 
 // 服务器指标（原子操作保证线程安全）
 pub const ServerMetrics = struct {
@@ -22,7 +20,7 @@ pub const ServerMetrics = struct {
     total_requests: atomic.Value(u64),
     active_connections: atomic.Value(u32),
     error_count: atomic.Value(u64),
-    
+
     pub fn init() ServerMetrics {
         return ServerMetrics{
             .uptime_start = 0, // 简化：暂时不使用真实时间戳
@@ -31,50 +29,46 @@ pub const ServerMetrics = struct {
             .error_count = atomic.Value(u64).init(0),
         };
     }
-    
+
     pub fn inc_requests(self: *ServerMetrics) void {
         _ = self.total_requests.rmw(.Add, 1, .acquire);
     }
-    
+
     pub fn inc_connections(self: *ServerMetrics) void {
         _ = self.active_connections.rmw(.Add, 1, .acquire);
     }
-    
+
     pub fn dec_connections(self: *ServerMetrics) void {
         _ = self.active_connections.rmw(.Sub, 1, .acquire);
     }
-    
+
     pub fn inc_errors(self: *ServerMetrics) void {
         _ = self.error_count.rmw(.Add, 1, .acquire);
     }
-    
+
     pub fn get_uptime_ms(self: *const ServerMetrics) i64 {
         if (self.uptime_start == 0) return 0;
         return getCurrentTimeMs() - self.uptime_start;
     }
-    
+
     pub fn get_total_requests(self: *const ServerMetrics) u64 {
         return self.total_requests.load(.acquire);
     }
-    
+
     pub fn get_active_connections(self: *const ServerMetrics) u32 {
         return self.active_connections.load(.acquire);
     }
-    
+
     pub fn get_error_count(self: *const ServerMetrics) u64 {
         return self.error_count.load(.acquire);
     }
 };
 
-// 获取当前单调时间（毫秒）
+// 获取当前 POSIX 时间（毫秒），Zig 0.16 兼容
 fn getCurrentTimeMs() i64 {
-    var ts: c.struct_timespec = undefined;
-    const rc = c.clock_gettime(c.CLOCK_MONOTONIC, &ts);
-    if (rc == 0) {
-        return @as(i64, @intCast(ts.tv_sec)) * 1000 +
-               @divTrunc(@as(i64, @intCast(ts.tv_nsec)), 1_000_000);
-    }
-    return 0;
+    var ts: linux.timespec = undefined;
+    _ = linux.clock_gettime(linux.CLOCK.REALTIME, &ts);
+    return @as(i64, @intCast(ts.sec)) * 1000 + @as(i64, @intCast(@divTrunc(ts.nsec, 1_000_000)));
 }
 
 // HTTP 请求结构
@@ -150,7 +144,7 @@ pub const HttpServer = struct {
         debug.print("   路由：\n", .{});
         debug.print("     GET /health → 健康检查\n", .{});
         debug.print("     GET /health?verbose=true → 详细指标\n", .{});
-        debug.print("     GET /infer?input=xxx&modality=text|image → 推理\n", .{});
+        debug.print("     GET /v1/infer?input=xxx&modality=text|image → 推理\n", .{});
 
         // 取消 errdefer，因为要返回这些资源
         return HttpServer{
@@ -172,8 +166,7 @@ pub const HttpServer = struct {
             debug.print("等待连接...\n", .{});
 
             // 使用 io_uring ACCEPT 获取连接
-            const conn_fd = io_uring.Syscall.accept(self.listen_fd, null, null) catch |err| {
-                _ = err; // 消除未使用警告
+            const conn_fd: i32 = io_uring.Syscall.accept(self.listen_fd, null, null) catch {
                 if (!self.is_running()) break;
                 continue;
             };
@@ -185,7 +178,7 @@ pub const HttpServer = struct {
 
             // 读取 HTTP 请求
             var buf: [8192]u8 = undefined;
-            const nread = io_uring.Syscall.recv(conn_fd, &buf, buf.len, 0) catch |err| {
+            const nread = io_uring.Syscall.recv(@intCast(conn_fd), &buf, buf.len, 0) catch |err| {
                 debug.print("读取请求失败: {}\n", .{err});
                 io_uring.Syscall.close(@intCast(conn_fd));
                 self.metrics.dec_connections();
@@ -218,26 +211,26 @@ pub const HttpServer = struct {
             };
             defer req.deinit();
 
-        debug.print("请求: {s} {s}\n", .{req.method, req.path});
+            debug.print("请求: {s} {s}\n", .{req.method, req.path});
 
-        // 生成请求上下文（原子ID，零分配）
-        // 从 X-Tenant-ID 头部提取租户 ID（v6.1.0）
-        var tenant_id: u64 = 0;
-        if (req.headers.get("X-Tenant-ID")) |tid_str| {
-            tenant_id = fmt.parseInt(u64, tid_str, 10) catch 0;
-        }
-        var ctx = context.RequestContext.init(req.method, req.path, tenant_id);
-        debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
-        
-        // P50: 日志相关变量
-        var status_code: u16 = 0;
-        var err_msg: ?[]const u8 = null;
-        var latency_ms: f64 = 0.0;
+            // 生成请求上下文（原子ID，零分配）
+            // 从 X-Tenant-ID 头部提取租户 ID（v6.1.0）
+            var tenant_id: u64 = 0;
+            if (req.headers.get("X-Tenant-ID")) |tid_str| {
+                tenant_id = fmt.parseInt(u64, tid_str, 10) catch 0;
+            }
+            var ctx = context.RequestContext.init(req.method, req.path, tenant_id);
+            debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
 
-        // P48-2: 递增 HTTP 请求总数
-        metrics_mod.incrHttpRequests();
+            // P50: 日志相关变量
+            var status_code: u16 = 0;
+            var err_msg: ?[]const u8 = null;
+            var latency_ms: f64 = 0.0;
 
-        // 路由处理
+            // P48-2: 递增 HTTP 请求总数
+            metrics_mod.incrHttpRequests();
+
+            // 路由处理
             if (mem.eql(u8, req.path, "/health")) {
                 const shutting_down = self.shutting_down.load(.acquire);
                 status_code = 200;
@@ -245,84 +238,84 @@ pub const HttpServer = struct {
                     debug.print("处理 /health 失败: {}\n", .{err});
                     status_code = 500;
                 };
-        } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
-            // P48-2: 递增推理请求计数
-            metrics_mod.incrInfer();
-            
-            // 计算推理延迟（使用单调时间差）
-            const now_ms = getCurrentTimeMs();
-            latency_ms = @as(f64, @floatFromInt(now_ms - ctx.timestamp_ms));
-            
-            // POST /v1/infer 处理（鉴权+推理）
-            const auth_header = if (req.headers.get("Authorization")) |val| val else null;
-            if (!middleware.checkAuth(auth_header)) {
-                // P48-2: 递增鉴权失败计数
-                metrics_mod.incrAuthFailures();
-                sendErrorResponse(conn_fd, 401, "Unauthorized") catch {};
-                self.metrics.inc_errors();
-                status_code = 401;
-                err_msg = "unauthorized";
+            } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
+                // P48-2: 递增推理请求计数
+                metrics_mod.incrInfer();
+
+                // 计算推理延迟（使用单调时间差）
+                const now_ms = getCurrentTimeMs();
+                latency_ms = @as(f64, @floatFromInt(now_ms - ctx.timestamp_ms));
+
+                // POST /v1/infer 处理（鉴权+推理）
+                const auth_header = if (req.headers.get("Authorization")) |val| val else null;
+                if (!middleware.checkAuth(auth_header)) {
+                    // P48-2: 递增鉴权失败计数
+                    metrics_mod.incrAuthFailures();
+                    sendErrorResponse(conn_fd, 401, "Unauthorized") catch {};
+                    self.metrics.inc_errors();
+                    status_code = 401;
+                    err_msg = "unauthorized";
+                } else {
+                    // 鉴权成功，暂返回 503（后续接入真实推理）
+                    sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                    self.metrics.inc_errors();
+                    status_code = 503;
+                    err_msg = "service unavailable";
+                }
+
+                // P49-2: 记录推理延迟到直方图
+                metrics_mod.observeInferLatency(latency_ms);
+            } else if (mem.eql(u8, req.path, "/ibus")) {
+                // DRD-058: IBus 内省总线端点
+                var ibus_buf: [2048]u8 = undefined;
+                const ibus_len = ibus.formatBusStatus(&ibus_buf);
+                const ibus_body = ibus_buf[0..ibus_len];
+
+                var hdr_buf: [256]u8 = undefined;
+                const header = fmt.bufPrint(&hdr_buf,
+                    "HTTP/1.1 200 OK\r\n" ++
+                    "Content-Type: application/json\r\n" ++
+                    "Content-Length: {d}\r\n" ++
+                    "Connection: close\r\n" ++
+                    "\r\n",
+                    .{ibus_len}
+                ) catch {
+                    sendErrorResponse(conn_fd, 500, "Internal Server Error") catch {};
+                    io_uring.Syscall.close(@intCast(conn_fd));
+                    self.metrics.dec_connections();
+                    self.metrics.inc_errors();
+                    continue;
+                };
+
+                _ = io_uring.Syscall.send(@intCast(conn_fd), header.ptr, header.len, 0) catch {};
+                _ = io_uring.Syscall.send(@intCast(conn_fd), ibus_body.ptr, ibus_body.len, 0) catch {};
+                status_code = 200;
+            } else if (mem.eql(u8, req.path, "/metrics")) {
+                // P48-3: 返回 Prometheus 格式指标
+                status_code = 200;
+                var metrics_buf: [512]u8 = undefined;
+                const len = metrics_mod.formatMetrics(&metrics_buf) catch {
+                    sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                    io_uring.Syscall.close(@intCast(conn_fd));
+                    self.metrics.dec_connections();
+                    continue;
+                };
+                const response = fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
+                    "Content-Type: text/plain; version=0.0.4\r\n" ++
+                    "Content-Length: {d}\r\n" ++
+                    "Connection: close\r\n" ++
+                    "\r\n{s}",
+                    .{ len, metrics_buf[0..len] }
+                ) catch {
+                    sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
+                    io_uring.Syscall.close(@intCast(conn_fd));
+                    self.metrics.dec_connections();
+                    continue;
+                };
+                _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch |err| {
+                    debug.print("发送/metrics响应失败: {}\n", .{err});
+                };
             } else {
-                // 鉴权成功，暂返回 503（后续接入真实推理）
-                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
-                self.metrics.inc_errors();
-                status_code = 503;
-                err_msg = "service unavailable";
-            }
-            
-            // P49-2: 记录推理延迟到直方图
-            metrics_mod.observeInferLatency(latency_ms);
-        } else if (mem.eql(u8, req.path, "/ibus")) {
-            // DRD-058: IBus 内省总线端点
-            var ibus_buf: [2048]u8 = undefined;
-            const ibus_len = ibus.formatBusStatus(&ibus_buf);
-            const ibus_body = ibus_buf[0..ibus_len];
-
-            var hdr_buf: [256]u8 = undefined;
-            const header = fmt.bufPrint(&hdr_buf,
-                "HTTP/1.1 200 OK\r\n" ++
-                "Content-Type: application/json\r\n" ++
-                "Content-Length: {d}\r\n" ++
-                "Connection: close\r\n" ++
-                "\r\n",
-                .{ibus_len}
-            ) catch {
-                sendErrorResponse(conn_fd, 500, "Internal Server Error") catch {};
-                io_uring.Syscall.close(@intCast(conn_fd));
-                self.metrics.dec_connections();
-                self.metrics.inc_errors();
-                continue;
-            };
-
-            _ = io_uring.Syscall.send(conn_fd, header.ptr, header.len, 0) catch {};
-            _ = io_uring.Syscall.send(conn_fd, ibus_body.ptr, ibus_body.len, 0) catch {};
-            status_code = 200;
-        } else if (mem.eql(u8, req.path, "/metrics")) {
-            // P48-3: 返回 Prometheus 格式指标
-            status_code = 200;
-            var metrics_buf: [512]u8 = undefined;
-            const len = metrics_mod.formatMetrics(&metrics_buf) catch {
-                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
-                io_uring.Syscall.close(@intCast(conn_fd));
-                self.metrics.dec_connections();
-                continue;
-            };
-            const response = fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
-                "Content-Type: text/plain; version=0.0.4\r\n" ++
-                "Content-Length: {d}\r\n" ++
-                "Connection: close\r\n" ++
-                "\r\n{s}",
-                .{ len, metrics_buf[0..len] }
-            ) catch {
-                sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
-                io_uring.Syscall.close(@intCast(conn_fd));
-                self.metrics.dec_connections();
-                continue;
-            };
-            _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
-                debug.print("发送/metrics响应失败: {}\n", .{err});
-            };
-        } else {
                 status_code = 404;
                 err_msg = "Not Found";
                 sendErrorResponse(conn_fd, 404, "Not Found") catch {};
@@ -331,7 +324,7 @@ pub const HttpServer = struct {
 
             // P50: 记录请求日志
             http_log.logRequest(ctx.id, req.method, req.path, status_code, latency_ms, err_msg);
-            
+
             // 关闭连接
             io_uring.Syscall.close(@intCast(conn_fd));
             self.metrics.dec_connections();
@@ -436,7 +429,7 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
             .{ body.len, body }
         );
 
-        _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
+        _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch |err| {
             debug.print("发送详细健康响应失败: {}\n", .{err});
             return;
         };
@@ -456,7 +449,7 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
             return;
         };
 
-        _ = io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0) catch |err| {
+        _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch |err| {
             debug.print("发送健康响应失败: {}\n", .{err});
             return;
         };
@@ -483,13 +476,14 @@ fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void 
         const fallback = fmt.bufPrint(&buf,
             "HTTP/1.1 {d} {s}\r\n" ++
             "Content-Type: text/plain\r\n" ++
+            "Content-Length: {d}\r\n" ++
             "Connection: close\r\n" ++
             "\r\n{s}",
             .{status_code, truncated, truncated.len, truncated}
         ) catch return;
-        _ = try io_uring.Syscall.send(conn_fd, fallback.ptr, fallback.len, 0);
+        _ = io_uring.Syscall.send(@intCast(conn_fd), fallback.ptr, fallback.len, 0) catch {};
         return;
     };
 
-    _ = try io_uring.Syscall.send(conn_fd, response.ptr, response.len, 0);
+    _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch {};
 }
