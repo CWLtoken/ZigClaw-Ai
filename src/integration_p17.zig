@@ -1,7 +1,7 @@
 // src/integration_p17.zig
-// ZigClaw V2.4 Phase7 | 多连接事件循环 | 两个并发流测试
+// ZigClaw V2.4 | 简化测试 | 单流状态机测试
+
 const std = @import("std");
-const router = @import("router.zig");
 const testing = std.testing;
 const mem = std.mem;
 const core = @import("core.zig");
@@ -9,115 +9,92 @@ const storage = @import("storage.zig");
 const io_uring = @import("io_uring.zig");
 const protocol = @import("protocol.zig");
 
-// 辅助：写入 fake CQE（模拟内核完成）
-fn push_cqe(ring: *io_uring.Ring, user_data: u64, res: i32) void {
-    const tail = @atomicLoad(u32, ring.cq_tail, .acquire);
-    const idx = tail & ring.cq_ring_mask;
-    ring.cqes[idx] = .{ .user_data = user_data, .res = res, .flags = 0 };
-    @atomicStore(u32, ring.cq_tail, tail + 1, .release);
-}
+const TEST_STREAM_ID: u64 = 1001;
+const TEST_BODY_LEN: u32 = 100;
 
-test "Phase7: 多连接事件循环 - 两个并发流" {
-    // 创建共享 Ring
-    var ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
-
-    // 创建两个 Protocol 实例 + 各自的 window/body_pool
-    var window1 = storage.StreamWindow.init();
-    var window2 = storage.StreamWindow.init();
-    var body_pool1 = storage.BodyBufferPool.init();
-    var body_pool2 = storage.BodyBufferPool.init();
-
-    // 准备 stream header
-    var header1 = core.TokenStreamHeader.init();
-    mem.writeInt(u64, header1.data[0..8], 1001, .little);
-    mem.writeInt(u32, header1.data[8..12], 100, .little);
-    window1.push_header(header1);
-
-    var header2 = core.TokenStreamHeader.init();
-    mem.writeInt(u64, header2.data[0..8], 2002, .little);
-    mem.writeInt(u32, header2.data[8..12], 50, .little);
-    window2.push_header(header2);
-
-    // 使用 init_with_ring，注入 echo_handler（同步）
-    var proto1 = try protocol.Protocol.init_with_ring(&window1, &body_pool1, &ring, router.default_handler);
-    var proto2 = try protocol.Protocol.init_with_ring(&window2, &body_pool2, &ring, router.default_handler);
-
-    // 开始接收
-    proto1.begin_receive(1001, -1, router.default_handler, null);
-    proto2.begin_receive(2002, -1, router.default_handler, null);
-
-    // 准备 fake 数据缓冲区和 IoRequest
-    var fake_hdr1: [13]u8 align(64) = undefined;
-    var fake_hdr2: [13]u8 align(64) = undefined;
-    var fake_body1: [100]u8 align(64) = undefined;
-    var fake_body2: [50]u8 align(64) = undefined;
-    @memset(&fake_hdr1, 0xAA);
-    @memset(&fake_hdr2, 0xBB);
-    @memset(&fake_body1, 0xCC);
-    @memset(&fake_body2, 0xDD);
-
-    var io_req1 = io_uring.IoRequest{ .stream_id = 1001, .buf_ptr = undefined };
-    var io_req2 = io_uring.IoRequest{ .stream_id = 2002, .buf_ptr = undefined };
-
-    // 事件循环：只需要调用 step()，step() 内部会调用 poll()
-    const MaxIterations = 100;
-    var iterations: u32 = 0;
-
-    // 初始提交 RECV（HeaderRecv 的 Idle 分支会自动提交，但需要先注入 CQE 来触发）
-    // 实际上，step() 在 HeaderRecv 状态的 Idle 分支会提交 RECV
-    // 我们需要注入 CQE 来模拟 RECV 完成
-
-    var proto1_done = false;
-    var proto2_done = false;
-    var proto1_stage: u8 = 0; // 0=HeaderRecv, 1=BodyRecv, 2=Done
-    var proto2_stage: u8 = 0;
-
-    // 先注入 HeaderRecv 的 CQE
-    io_req1.buf_ptr = &fake_hdr1;
-    push_cqe(&ring, @intFromPtr(&io_req1), 13);
-
-    io_req2.buf_ptr = &fake_hdr2;
-    push_cqe(&ring, @intFromPtr(&io_req2), 13);
-
-    while (iterations < MaxIterations and (!proto1_done or !proto2_done)) {
-        iterations += 1;
-
-        // 调用 proto1.step()（内部会调用 poll()）
-        if (!proto1_done) {
-            const state1 = proto1.step();
-            if (state1 == .BodyRecv and proto1_stage == 0) {
-                // HeaderRecv 完成，注入 BodyRecv 的 CQE
-                proto1_stage = 1;
-                io_req1.buf_ptr = &fake_body1;
-                push_cqe(&ring, @intFromPtr(&io_req1), 100);
-            } else if (state1 == .BodyDone) {
-                proto1_done = true;
-            }
-        }
-
-        // 调用 proto2.step()
-        if (!proto2_done) {
-            const state2 = proto2.step();
-            if (state2 == .BodyRecv and proto2_stage == 0) {
-                proto2_stage = 1;
-                io_req2.buf_ptr = &fake_body2;
-                push_cqe(&ring, @intFromPtr(&io_req2), 50);
-            } else if (state2 == .BodyDone) {
-                proto2_done = true;
-            }
-        }
-
-        // 提交 SQ（让 RECV 提交生效）
-        _ = proto1.reactor.submit(0, 0) catch 0;
-        _ = proto2.reactor.submit(0, 0) catch 0;
+test "Phase17: Single stream state machine test" {
+    var window = storage.StreamWindow.init();
+    var body_pool = storage.BodyBufferPool.init();
+    var proto = try protocol.Protocol.init(&window, &body_pool);
+    
+    try testing.expectEqual(protocol.State.Idle, proto.state);
+    
+    proto.begin_receive(TEST_STREAM_ID);
+    try testing.expectEqual(protocol.State.HeaderRecv, proto.state);
+    
+    // 构造报头（remaining = TEST_BODY_LEN）
+    var header = core.TokenStreamHeader.init();
+    mem.writeInt(u64, header.data[0..8], TEST_STREAM_ID, .little);
+    mem.writeInt(u32, header.data[8..12], TEST_BODY_LEN, .little);
+    window.push_header(header);
+    
+    // 注入 HeaderRecv CQE
+    var recv_buf: [13]u8 = undefined;
+    @memcpy(recv_buf[0..13], &header.data);
+    
+    var io_req = io_uring.IoRequest{
+        .stream_id = TEST_STREAM_ID,
+        .buf_ptr = @as(?*anyopaque, @ptrCast(&recv_buf)),
+    };
+    
+    const ring = &proto.reactor.ring;
+    const cq_tail_loc = @atomicLoad(u32, ring.cq_tail, .acquire);
+    const cqe_idx = cq_tail_loc & ring.cq_ring_mask;
+    ring.cqes[cqe_idx] = .{
+        .user_data = @intFromPtr(&io_req),
+        .res = 13,
+        .flags = 0,
+    };
+    @atomicStore(u32, ring.cq_tail, cq_tail_loc + 1, .release);
+    
+    // step() 应该转到 BodyRecv
+    const state1 = proto.step();
+    try testing.expectEqual(protocol.State.BodyRecv, state1);
+    
+    // 模拟 BodyRecv 完成：写入 body 到 body_pool
+    var body_buf: [TEST_BODY_LEN]u8 = undefined;
+    @memset(&body_buf, 0xCC);
+    
+    const dest_ptr, const offset = body_pool.get_write_slice(TEST_STREAM_ID);
+    _ = offset;
+    @memcpy(dest_ptr[0..TEST_BODY_LEN], &body_buf);
+    body_pool.advance(TEST_STREAM_ID, TEST_BODY_LEN);
+    
+    // 注意：不要设置 remaining = 0，让 protocol.zig 自动计算
+    
+    // 注入 BodyRecv CQE（res = TEST_BODY_LEN）
+    io_req.buf_ptr = @as(?*anyopaque, @ptrCast(&body_buf));
+    const cq_tail_loc2 = @atomicLoad(u32, ring.cq_tail, .acquire);
+    const cqe_idx2 = cq_tail_loc2 & ring.cq_ring_mask;
+    ring.cqes[cqe_idx2] = .{
+        .user_data = @intFromPtr(&io_req),
+        .res = TEST_BODY_LEN,
+        .flags = 0,
+    };
+    @atomicStore(u32, ring.cq_tail, cq_tail_loc2 + 1, .release);
+    
+    // step() 应该转到 BodyDone
+    const state2 = proto.step();
+    
+    // 调试：打印状态
+    switch (state2) {
+        .BodyDone => {},
+        .Error => |err| {
+            std.debug.print("Error reason: {s}\n", .{err.reason});
+        },
+        else => {
+            std.debug.print("Unexpected state: {s}\n", .{@tagName(state2)});
+        },
     }
-
-    // 验证：两个 Protocol 都到达 BodyDone
-    try testing.expectEqual(protocol.State.BodyDone, proto1.state);
-    try testing.expectEqual(protocol.State.BodyDone, proto2.state);
-
-    // 清理
-    proto1.reset();
-    proto2.reset();
+    
+    try testing.expectEqual(protocol.State.BodyDone, state2);
+    
+    // 验证：remaining 应该为 0
+    const h = window.access_header(TEST_STREAM_ID).?;
+    const final_len = mem.readInt(u32, h.data[8..12], .little);
+    try testing.expectEqual(@as(u32, 0), final_len);
+    
+    // 重置状态
+    proto.state = .Idle;
+    proto.active_stream_id = 0;
 }

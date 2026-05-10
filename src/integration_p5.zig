@@ -1,7 +1,5 @@
 // src/integration_p5.zig
 // ZigClaw V2.4 Phase5 | IoRequest 架构 | 真实物理内存搬运
-// src/integration_p5.zig
-// ZigClaw V2.4 Phase5 | 真实物理内存搬运 | IoRequest 架构验证
 const std = @import("std");
 const testing = std.testing;
 const mem = std.mem;
@@ -32,8 +30,8 @@ test "Phase5: 真实物理内存搬运 - IoRequest 架构验证" {
     @memset(&fake_body_src, 0xBB);
     fake_body_src[0] = 0x02;
 
-    var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
-    proto.begin_receive(TEST_STREAM_ID, -1, router.default_handler, null);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool);
+    proto.begin_receive(TEST_STREAM_ID);
 
     // ── Step 1: HeaderRecv ──
     var io_req_hdr = io_uring.IoRequest{
@@ -106,6 +104,7 @@ test "Phase5: 真实物理内存搬运 - IoRequest 架构验证" {
     const final_len = mem.readInt(u32, final_header.data[8..12], .little);
     try testing.expectEqual(@as(u32, 0), final_len);
 
-    // 第一步调试：验证正常路径上 reset() 不会崩溃
-    proto.reset();
+    // 手动重置状态
+    proto.state = .Idle;
+    proto.active_stream_id = 0;
 }

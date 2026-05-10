@@ -27,11 +27,11 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     mem.writeInt(u32, test_header.data[8..12], 100, .little);
     window.push_header(test_header);
 
-    var proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
+    var proto = try protocol.Protocol.init(&window, &test_body_pool);
 
     // ── 用例1：user_data 不匹配 → 立即 reset() → .Idle (I-C) ──
     proto.state = .Idle;
-    proto.begin_receive(42, -1, router.default_handler, null);
+    proto.begin_receive(42);
 
     var io_req1 = io_uring.IoRequest{ .stream_id = 99, .buf_ptr = null };
     {
@@ -52,15 +52,17 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     // I-C: 错误后立即 reset()，返回 .Idle
     const s1 = proto.step();
     try testing.expect(std.meta.activeTag(s1) == .Error); // 先确认进入错误状态
-    proto.reset(); // 清理状态
+    // 手动重置状态
+    proto.state = .Idle;
+    proto.active_stream_id = 0;
     try testing.expectEqual(protocol.State.Idle, proto.state); // 确认回到 Idle
 
     // ── 用例2：HeaderRecv 成功 → .BodyRecv ──
     // 重新初始化 proto，避免状态污染
-    proto = try protocol.Protocol.init(&window, &test_body_pool, router.default_handler);
+    proto = try protocol.Protocol.init(&window, &test_body_pool);
     // 重新 push_header，因为用例1的 reset() 释放了槽位
     window.push_header(test_header);
-    proto.begin_receive(42, -1, router.default_handler, null);
+    proto.begin_receive(42);
 
     var fake_hdr: [13]u8 align(64) = undefined;
     @memset(&fake_hdr, 0xAA);
@@ -135,6 +137,7 @@ test "Integration: Protocol State Machine Lifecycle & Defenses" {
     try testing.expectEqual(@as(u32, 0), final_len);
 
     // 第2步：BodyDone 后自动复位
-    proto.reset();
+    proto.state = .Idle;
+    proto.active_stream_id = 0;
     try testing.expectEqual(protocol.State.Idle, proto.state);
 }
