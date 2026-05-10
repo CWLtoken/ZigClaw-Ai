@@ -17,9 +17,6 @@ fn push_cqe(ring: *io_uring.Ring, user_data: u64, res: i32) void {
 }
 
 test "P24-S1: 客户端不发送数据（超时）" {
-    var ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
-
     var window = storage.StreamWindow.init();
     var body_pool = storage.BodyBufferPool.init();
 
@@ -28,12 +25,12 @@ test "P24-S1: 客户端不发送数据（超时）" {
     mem.writeInt(u64, header.data[0..8], stream_id, .little);
     window.push_header(header);
 
-    var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring, router.default_handler);
-    proto.begin_receive(stream_id, -1, router.default_handler, null);
+    var proto = try protocol.Protocol.init(&window, &body_pool);
+    proto.begin_receive(stream_id);
 
     // 注入超时 CQE（ETIME = 62）
     var timeout_req = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = undefined };
-    push_cqe(&ring, @intFromPtr(&timeout_req), -62);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&timeout_req), -62);
 
     const MaxIterations = 50;
     var iterations: u32 = 0;
@@ -45,7 +42,9 @@ test "P24-S1: 客户端不发送数据（超时）" {
 
         if (state == .Error) {
             recovered = true;
-            proto.reset();
+            // 手动重置状态
+            proto.state = .Idle;
+            proto.active_stream_id = 0;
         }
 
         _ = proto.reactor.submit(0, 0) catch 0;
@@ -55,9 +54,6 @@ test "P24-S1: 客户端不发送数据（超时）" {
 }
 
 test "P24-S2: 客户端发送错误报头（stream_id 不匹配）" {
-    var ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
-
     var window = storage.StreamWindow.init();
     var body_pool = storage.BodyBufferPool.init();
 
@@ -66,14 +62,14 @@ test "P24-S2: 客户端发送错误报头（stream_id 不匹配）" {
     mem.writeInt(u64, header.data[0..8], stream_id, .little);
     window.push_header(header);
 
-    var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring, router.default_handler);
-    proto.begin_receive(stream_id, -1, router.default_handler, null);
+    var proto = try protocol.Protocol.init(&window, &body_pool);
+    proto.begin_receive(stream_id);
 
     // 注入 CQE，但是使用错误的 stream_id
     var fake_hdr: [13]u8 align(64) = undefined;
     @memset(&fake_hdr, 0xAA);
     var wrong_req = io_uring.IoRequest{ .stream_id = 9999, .buf_ptr = &fake_hdr };
-    push_cqe(&ring, @intFromPtr(&wrong_req), 13);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&wrong_req), 13);
 
     const MaxIterations = 50;
     var iterations: u32 = 0;
@@ -85,7 +81,9 @@ test "P24-S2: 客户端发送错误报头（stream_id 不匹配）" {
 
         if (state == .Error) {
             handled = true;
-            proto.reset();
+            // 手动重置状态
+            proto.state = .Idle;
+            proto.active_stream_id = 0;
         }
 
         _ = proto.reactor.submit(0, 0) catch 0;
@@ -95,9 +93,6 @@ test "P24-S2: 客户端发送错误报头（stream_id 不匹配）" {
 }
 
 test "P24-S3: 客户端中途断开（模拟 fd 关闭）" {
-    var ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
-
     var window = storage.StreamWindow.init();
     var body_pool = storage.BodyBufferPool.init();
 
@@ -106,18 +101,18 @@ test "P24-S3: 客户端中途断开（模拟 fd 关闭）" {
     mem.writeInt(u64, header.data[0..8], stream_id, .little);
     window.push_header(header);
 
-    var proto = try protocol.Protocol.init_with_ring(&window, &body_pool, &ring, router.default_handler);
-    proto.begin_receive(stream_id, -1, router.default_handler, null);
+    var proto = try protocol.Protocol.init(&window, &body_pool);
+    proto.begin_receive(stream_id);
 
     // 注入 HeaderRecv CQE
     var fake_hdr: [13]u8 align(64) = undefined;
     @memset(&fake_hdr, 0xAA);
     var io_req = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = &fake_hdr };
-    push_cqe(&ring, @intFromPtr(&io_req), 13);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&io_req), 13);
 
     // 模拟客户端断开：注入错误 CQE（ECONNRESET = 104）
     var disconnect_req = io_uring.IoRequest{ .stream_id = stream_id, .buf_ptr = undefined };
-    push_cqe(&ring, @intFromPtr(&disconnect_req), -104);
+    push_cqe(&proto.reactor.ring, @intFromPtr(&disconnect_req), -104);
 
     const MaxIterations = 50;
     var iterations: u32 = 0;
@@ -130,7 +125,9 @@ test "P24-S3: 客户端中途断开（模拟 fd 关闭）" {
         if (state == .Error or state == .Idle) {
             recovered = true;
             if (state == .Error) {
-                proto.reset();
+                // 手动重置状态
+                proto.state = .Idle;
+                proto.active_stream_id = 0;
             }
         }
 

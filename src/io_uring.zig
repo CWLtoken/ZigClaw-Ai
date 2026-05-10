@@ -5,6 +5,16 @@
 pub const SQ_DEPTH = 1024;
 pub const SQ_MASK = SQ_DEPTH - 1;
 
+// P1-3: 编译期参数合法性强校验
+comptime {
+    if (SQ_DEPTH == 0 or (SQ_DEPTH & (SQ_DEPTH - 1)) != 0) {
+        @compileError("SQ_DEPTH must be a power of two");
+    }
+    if (SQ_MASK != SQ_DEPTH - 1) {
+        @compileError("SQ_MASK must equal SQ_DEPTH - 1");
+    }
+}
+
 // Network constants (top-level, accessible via io_uring.AF_INET etc.)
 pub const AF_INET: u32 = 2;
 pub const SOCK_STREAM: u32 = 1;

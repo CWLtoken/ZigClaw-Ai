@@ -13,8 +13,8 @@ pub const Server = struct {
     port: u16,
 
     /// 初始化服务端：socket → bind → listen
-    pub fn init(ring: *io_uring.Ring) !Server {
-        _ = ring; // TODO: remove ring dependency, tracked as tech debt
+    /// P1-1: 已移除 Ring 依赖，入口层不碰底层结构
+    pub fn init() !Server {
         // 1. 创建监听 socket
         const listen_fd = try io_uring.Syscall.socket(
             io_uring.AF_INET,
