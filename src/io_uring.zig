@@ -130,8 +130,8 @@ pub const Ring = struct {
         };
 
         // === 阶段 1：创建 fd ===
-        const fd: u32 = try Syscall.setup(1024, &params);
-        errdefer Syscall.close(fd);
+        // 军规：显式错误处理，禁止隐式 try
+        const fd: u32 = if (Syscall.setup(1024, &params)) |val| val else |err| return err;
 
         // === 尺寸计算 ===
         const sq_ring_size_raw: usize = params.sq_off.array + (params.sq_entries * @sizeOf(u32));
@@ -143,15 +143,22 @@ pub const Ring = struct {
         const cq_ring_size: usize = (cq_ring_size_raw + PAGE - 1) & ~(PAGE - 1);
 
         // === 阶段 2：映射 SQ ring ===
-        const sq_ptr = try Syscall.map_ring(fd, 0, sq_ring_size);
-        errdefer Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
+        // 军规：显式错误处理，禁止隐式 try
+        const sq_ptr = if (Syscall.map_ring(fd, 0, sq_ring_size)) |val| val else |err| {
+            Syscall.close(fd);
+            return err;
+        };
 
         // === 阶段 3：映射 CQ ring ===
         // ZC-7-01 修复：CQ ring 必须用 IORING_OFF_CQ_RING = 0x8000000，不是 sq_ring_size
         // D6: CQ ring mmap offset = IORING_OFF_CQ_RING (0x8000000)，错误使用 sq_ring_size 导致
         // broken chain FSync CQE 返回 -9 而不是 -125（ECANCELED）
-        const cq_ptr = try Syscall.map_ring(fd, 0x8000000, cq_ring_size);
-        errdefer Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
+        // 军规：显式错误处理，禁止隐式 try
+        const cq_ptr = if (Syscall.map_ring(fd, 0x8000000, cq_ring_size)) |val| val else |err| {
+            Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
+            Syscall.close(fd);
+            return err;
+        };
 
         // === 阶段 4：映射 SQE 数组 ===
         // 偏移量 IORING_OFF_SQES = 0x10000000
@@ -167,9 +174,11 @@ pub const Ring = struct {
             @as(usize, 0x10000000), // IORING_OFF_SQES
         );
         if (sqes_raw == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED
+            Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
+            Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
+            Syscall.close(fd);
             return SyscallError.MmapFailed;
         }
-        errdefer Syscall.munmap(sqes_raw, sqes_size);
 
         // === 阶段 5：构造 Ring 结构体 ===
         const sqes_aligned = @as([*]SqEntry, @ptrFromInt(sqes_raw));
@@ -453,12 +462,10 @@ pub const Syscall = struct {
         );
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
-            last_send_rc = rc;
             return SyscallError.OpenFailed;
         }
         const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) {
-            last_send_rc = @as(usize, @bitCast(@as(i64, result)));
             return SyscallError.OpenFailed;
         }
         return result;
@@ -478,10 +485,6 @@ pub const Syscall = struct {
         return result;
     }
 };
-
-/// 调试用：最后一次 send 的返回值
-// DEBUG ONLY: remove before v3.0 production
-pub var last_send_rc: usize = 0;
 
 /// Linux struct sockaddr_in (16 bytes, C ABI compatible)
 pub const SockAddrIn = extern struct {

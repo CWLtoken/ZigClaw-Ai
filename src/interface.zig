@@ -145,21 +145,54 @@ pub const ContractVerifier = struct {
     /// 规则：
     ///   - 完全相同 → 匹配
     ///   - 期望 anyerror!X，实际 error_set!X → 匹配（更严格的错误集是合理的）
+    ///   - 期望 error_set_parent!X，实际 error_set_child!X → 匹配（子集关系）
     ///   - 期望 X，实际 X → 匹配
     ///   - 其他 → 不匹配
+    ///
+    /// ErrorSet 子集校验：
+    ///   如果期望是 error{A,B,C}!X，实际是 error{A,B}!X，则匹配（子集）
+    ///   如果期望是 error{A,B}!X，实际是 error{A,B,C}!X，则不匹配（超集）
+    ///   如果期望是 anyerror!X，实际是任意 error_set!X，则匹配
     fn retTypeMatches(comptime actual: type, comptime expected: type) bool {
         if (actual == expected) return true;
         // 检查是否是 error union 兼容
         const actual_info = @typeInfo(actual);
         const expected_info = @typeInfo(expected);
-        if (actual_info == .error_union and expected_info == .error_union) {
-            // 期望 anyerror!X，实际 error_set!X
-            if (expected_info.error_union.error_set == anyerror and actual_info.error_union.error_set != anyerror) {
-                // 检查 payload 类型是否匹配
-                if (actual_info.error_union.payload == expected_info.error_union.payload) {
-                    return true;
-                }
+        if (actual_info == .@"error_union" and expected_info == .@"error_union") {
+            // payload 类型必须匹配
+            if (actual_info.@"error_union".payload != expected_info.@"error_union".payload) {
+                return false;
             }
+            const actual_err_set = actual_info.@"error_union".error_set;
+            const expected_err_set = expected_info.@"error_union".error_set;
+
+            // 期望 anyerror!X，实际任意 error_set!X → 匹配
+            if (expected_err_set == anyerror) return true;
+
+            // 实际是 anyerror，期望不是 → 不匹配（anyerror 不是任何 error_set 的子集）
+            if (actual_err_set == anyerror) return false;
+
+            // ErrorSet 子集关系校验：
+            // actual_err_set 和 expected_err_set 都是 type（error set 类型）
+            // 用 @typeInfo 获取错误列表
+            const actual_errs = @typeInfo(actual_err_set).@"error_set".?;
+            const expected_errs = @typeInfo(expected_err_set).@"error_set".?;
+
+            // 如果 actual 的错误数量 > expected，一定不是子集
+            if (actual_errs.len > expected_errs.len) return false;
+
+            // 检查 actual 的每个错误是否都在 expected 中
+            for (actual_errs) |actual_err| {
+                var found = false;
+                for (expected_errs) |expected_err| {
+                    if (actual_err.name == expected_err.name) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return false;
+            }
+            return true;
         }
         return false;
     }
