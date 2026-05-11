@@ -193,4 +193,50 @@ comptime {
     // _interface.ContractVerifier.checkStorage(_file_store.FileStore);
 
     // _interface 通过 ContractVerifier 调用隐式引用
+
+    // ========================================================================
+    // P5: 错误注入测试 — 内联在 tests.zig 中（可访问 src/ 根目录模块）
+    // ========================================================================
+
+    // 验证 SyscallError 包含所有预期错误变体
+    const _io_uring = @import("io_uring.zig");
+    const _SyscallError = _io_uring.SyscallError;
+    const _se_info = @typeInfo(_SyscallError);
+    if (_se_info != .@"error_set") {
+        @compileError("P5 ASSERT: SyscallError is not an error_set");
+    }
+    const _se_list = _se_info.@"error_set".?;
+    // 检查至少包含 5 个预期错误
+    if (_se_list.len < 5) {
+        @compileError("P5 ASSERT: SyscallError has fewer than 5 variants");
+    }
+
+    // 验证 Ring.init 返回 error union
+    const _Ring = _io_uring.Ring;
+    const _init_info = @typeInfo(@TypeOf(_Ring.init)).@"fn".return_type.?;
+    if (@typeInfo(_init_info) != .@"error_union") {
+        @compileError("P5 ASSERT: Ring.init does not return error union");
+    }
+
+    // 验证 Ring.deinit 返回 void
+    const _deinit_ret = @typeInfo(@TypeOf(_Ring.deinit)).@"fn".return_type.?;
+    if (@typeInfo(_deinit_ret) != .void) {
+        @compileError("P5 ASSERT: Ring.deinit must return void");
+    }
+
+    // 验证 AlignedAtomicU64 缓存行对齐
+    const _metrics = @import("metrics.zig");
+    const _aa = _metrics.AlignedAtomicU64;
+    if (@alignOf(_aa) != 64) {
+        @compileError("P5 ASSERT: AlignedAtomicU64 must be 64-byte aligned");
+    }
+    if (@sizeOf(_aa) % 64 != 0) {
+        @compileError("P5 ASSERT: AlignedAtomicU64 size must be multiple of 64");
+    }
+
+    // 验证 connection_pool.ConnSlot 大小不超过缓存行
+    const _pool = @import("connection_pool.zig");
+    if (@sizeOf(_pool.ConnSlot) > 64) {
+        @compileError("P5 ASSERT: ConnSlot must fit in one cache line");
+    }
 }

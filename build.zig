@@ -1,20 +1,37 @@
-const std = @import("std");
+// build.zig
+// ZigClaw-AI v3.1 | 军规级构建系统 | Zig 0.16 标准 Build API
+const Build = @import("std").Build;
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     // -------------------------------------------------
-    // 1. C 库：image_feature（stb_image 实现，零第三方依赖）
+    // 0. 编译期配置选项
     // -------------------------------------------------
-    const c_src = b.addSystemCommand(&.{
-        "zig",
-        "build-exe",
-        "src/image_feature.c",
-        "--library",
-        "c",
+    const batch_threshold = b.option(u32, "batch_threshold", "io_uring SQE batch submit threshold (default: 8)") orelse 8;
+    const build_options = b.addOptions();
+    build_options.addOption(u32, "batch_threshold", batch_threshold);
+
+    // -------------------------------------------------
+    // 1. C 库：image_feature（stb_image 实现，零第三方依赖）
+    // 军规：使用 addLibrary + addCSourceFile，禁止 addSystemCommand
+    // -------------------------------------------------
+    const c_mod = b.createModule(.{
+        .root_source_file = null,
+        .target = target,
+        .optimize = optimize,
     });
-    _ = c_src;
+    c_mod.addCSourceFile(.{
+        .file = b.path("src/image_feature.c"),
+        .flags = &.{"-std=c11"},
+    });
+    c_mod.linkSystemLibrary("c", .{});
+
+    const c_lib = b.addLibrary(.{
+        .name = "image_feature",
+        .root_module = c_mod,
+    });
 
     // -------------------------------------------------
     // 2. 主可执行文件：ZigClaw 服务
@@ -28,10 +45,12 @@ pub fn build(b: *std.Build) void {
         .name = "zigclaw",
         .root_module = exe_mod,
     });
+    exe.root_module.addOptions("build_options", build_options);
+    exe.root_module.linkLibrary(c_lib);
     exe.root_module.link_libc = true;
 
     // -------------------------------------------------
-    // 3. 测试：集成测试（P3–P58 等）
+    // 3. 测试：集成测试
     // -------------------------------------------------
     const test_mod = b.createModule(.{
         .root_source_file = b.path("src/tests.zig"),
@@ -41,6 +60,8 @@ pub fn build(b: *std.Build) void {
     const tests = b.addTest(.{
         .root_module = test_mod,
     });
+    tests.root_module.addOptions("build_options", build_options);
+    tests.root_module.linkLibrary(c_lib);
     tests.root_module.link_libc = true;
 
     const test_step = b.step("test", "Run ZigClaw integration tests");

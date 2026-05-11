@@ -44,19 +44,19 @@ test "P35: HTTP 响应格式构造验证" {
     const result_text = "模拟推理结果";
 
     // 模拟 http_server.zig 中的响应构造
-    const response_body = @import("std").fmt.allocPrint(alloc,
+    const response_body = try @import("std").fmt.allocPrint(alloc,
         "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"{s}\"}}",
         .{ input, modality_str, result_text }
-    ) catch unreachable;
+    );
 
-    const response = @import("std").fmt.allocPrint(alloc,
+    const response = try @import("std").fmt.allocPrint(alloc,
         "HTTP/1.1 200 OK\r\n" ++
         "Content-Type: application/json\r\n" ++
         "Content-Length: {d}\r\n" ++
         "Connection: close\r\n" ++
         "\r\n{s}",
         .{ response_body.len, response_body }
-    ) catch unreachable;
+    );
 
     // 验证响应包含必要部分
     try testing.expect(@import("std").mem.indexOf(u8, response, "HTTP/1.1 200 OK") != null);

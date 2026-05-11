@@ -18,7 +18,11 @@ pub const Reactor = struct {
     pending_sqe_count: u32 = 0,
 
     /// 批量提交阈值：累积到这么多 SQE 时自动 submit
-    const BATCH_THRESHOLD: u32 = 8;
+    /// 可通过 build.zig 编译期配置：zig build -Dbatch_threshold=16
+    const BATCH_THRESHOLD: u32 = if (@hasDecl(@import("build_options"), "batch_threshold"))
+        @import("build_options").batch_threshold
+    else
+        8;
 
     // ====== 军规：flush 调用位置 ======
     // 1. prepare_recv / prepare_send 中 >= BATCH_THRESHOLD 时自动 flush
@@ -36,8 +40,14 @@ pub const Reactor = struct {
     ///   2. accumulated SQE 达到 BATCH_THRESHOLD
     pub fn flush(self: *Reactor) io_uring.SyscallError!void {
         if (self.pending_sqe_count > 0) {
-            _ = try io_uring.Syscall.enter(self.ring.fd, self.pending_sqe_count, 0, 0);
-            self.pending_sqe_count = 0;
+            // 军规：显式错误处理，禁止隐式 try
+            if (io_uring.Syscall.enter(self.ring.fd, self.pending_sqe_count, 0, 0)) |_|
+            {
+                self.pending_sqe_count = 0;
+            } else |err|
+            {
+                return err;
+            }
         }
     }
 
@@ -71,8 +81,15 @@ pub const Reactor = struct {
         @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
 
         self.pending_sqe_count += 1;
+        // 军规：显式错误处理，禁止隐式 try
         if (self.pending_sqe_count >= BATCH_THRESHOLD) {
-            try self.flush();
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
+                return err;
+            }
         }
     }
 
@@ -101,8 +118,15 @@ pub const Reactor = struct {
         @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
 
         self.pending_sqe_count += 1;
+        // 军规：显式错误处理，禁止隐式 try
         if (self.pending_sqe_count >= BATCH_THRESHOLD) {
-            try self.flush();
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
+                return err;
+            }
         }
     }
 
@@ -110,11 +134,15 @@ pub const Reactor = struct {
     pub fn poll(self: *Reactor) Event {
         // 进入 poll 前，先 flush 所有挂起的 SQE
         // 军规：flush 失败时继续执行（poll 仍可返回 Idle），但必须显式处理
-        self.flush() catch |flush_err| {
+        if (self.flush()) |_|
+        {
+            // flush 成功，继续
+        } else |flush_err|
+        {
             // flush 失败意味着内核提交失败，记录后继续
             // 不 panic，不 unreachable，不空 catch
             log.warn("Reactor.poll: flush failed: {s}", .{@errorName(flush_err)});
-        };
+        }
 
         const cq_head = @atomicLoad(u32, self.ring.cq_head, .acquire);
         const cq_tail = @atomicLoad(u32, self.ring.cq_tail, .acquire);

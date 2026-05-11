@@ -58,8 +58,8 @@ pub var active_connections: AlignedAtomicU64 = AlignedAtomicU64.init(0);
 pub const LATENCY_BUCKETS = [_]f64{ 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000 };
 const NUM_BUCKETS = LATENCY_BUCKETS.len + 1; // +1 for +Inf bucket
 
-// 每个桶的计数器（静态数组，在 initLatencyBuckets 中初始化）
-pub var infer_latency_buckets: [NUM_BUCKETS]atomic.Value(u64) = undefined;
+// 每个桶的计数器（静态数组，编译期零初始化）
+pub var infer_latency_buckets: [NUM_BUCKETS]atomic.Value(u64) = [_]atomic.Value(u64){atomic.Value(u64).init(0)} ** NUM_BUCKETS;
 const init_thresholds = [_]u64{ 100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000 };
 var buckets_initialized = atomic.Value(bool).init(false);
 
