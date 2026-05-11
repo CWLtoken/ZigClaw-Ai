@@ -8,8 +8,9 @@
 //   4. 连接中断（recv 返回 0 或 ECONNRESET）
 //   5. Ring.init() 错误路径（显式 if-else 验证）
 
-const std = @import("std");
-const testing = std.testing;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
+const math = @import("std").math;
 
 // 注意：本文件在 test_integration/ 子目录中，无法通过 @import 访问
 // src/ 根目录的模块（Zig 0.16 禁止 ../ 越界导入）。
@@ -37,9 +38,9 @@ test "error set field names are correct" {
     const MyError = error{A, B, C};
     const info = @typeInfo(MyError);
     const err_list = info.@"error_set".?;
-    try testing.expect(std.mem.eql(u8, err_list[0].name, "A"));
-    try testing.expect(std.mem.eql(u8, err_list[1].name, "B"));
-    try testing.expect(std.mem.eql(u8, err_list[2].name, "C"));
+    try testing.expect(mem.eql(u8, err_list[0].name, "A"));
+    try testing.expect(mem.eql(u8, err_list[1].name, "B"));
+    try testing.expect(mem.eql(u8, err_list[2].name, "C"));
 }
 
 // ============================================================================
@@ -172,15 +173,15 @@ test "mock conn state — transition to Error and back" {
 // ============================================================================
 
 test "i32 min value" {
-    try testing.expect(std.math.minInt(i32) == -2147483648);
+    try testing.expect(math.minInt(i32) == -2147483648);
 }
 
 test "i32 max value" {
-    try testing.expect(std.math.maxInt(i32) == 2147483647);
+    try testing.expect(math.maxInt(i32) == 2147483647);
 }
 
 test "u32 max value" {
-    try testing.expect(std.math.maxInt(u32) == 4294967295);
+    try testing.expect(math.maxInt(u32) == 4294967295);
 }
 
 // ============================================================================
@@ -248,14 +249,14 @@ test "if-else error handling pattern — error case" {
 test "comptime power of 2 check" {
     comptime {
         const depth: usize = 1024;
-        try std.testing.expect(depth > 0);
-        try std.testing.expect((depth & (depth - 1)) == 0);
+        try testing.expect(depth > 0);
+        try testing.expect((depth & (depth - 1)) == 0);
     }
 }
 
 test "comptime size check" {
     comptime {
         const S = struct { a: u64, b: u64, c: u64 };
-        try std.testing.expect(@sizeOf(S) == 24);
+        try testing.expect(@sizeOf(S) == 24);
     }
 }
