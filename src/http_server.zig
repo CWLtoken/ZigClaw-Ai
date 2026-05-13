@@ -219,7 +219,7 @@ pub const HttpServer = struct {
                                 conn_count += 1;
 
                                 var recv_iov = io_uring.Iovec{
-                                    .iov_base = @as(*anyopaque, @ptrCast(&conn.buf)),
+                                    .iov_base = @as([*]u8, @ptrCast(&conn.buf)),
                                     .iov_len = conn.buf.len,
                                 };
                                 var recv_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
@@ -294,7 +294,7 @@ pub const HttpServer = struct {
 
                                     // 提交 SEND
                                     var send_iov = io_uring.Iovec{
-                                        .iov_base = @as(*anyopaque, @ptrCast(response.ptr)),
+                                        .iov_base = @constCast(response.ptr),
                                         .iov_len = response.len,
                                     };
                                     var send_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
