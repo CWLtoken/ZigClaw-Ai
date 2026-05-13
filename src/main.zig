@@ -6,7 +6,7 @@ const mem = @import("std").mem;
 const io_uring = @import("io_uring.zig");
 const http_server = @import("http_server.zig");
 
-// 全局服务器指针
+// 全局服务器指针（原子操作保证信号处理安全）
 var g_server: ?*http_server.HttpServer = null;
 
 pub fn main() !void {

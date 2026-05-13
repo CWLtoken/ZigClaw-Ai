@@ -54,16 +54,12 @@ pub const FileStore = struct {
         var offset: usize = 0;
         while (offset < total_bytes) {
             const chunk = @min(4096, total_bytes - offset);
-            const rc = linux.syscall3(
-                .write,
-                @as(usize, @intCast(fd)),
-                @intFromPtr(&heats_bytes[offset]),
+            const written = io_uring.write(
+                fd,
+                @as([*]const u8, @ptrCast(&heats_bytes[offset])),
                 chunk,
-            );
-            if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
-                return error.WriteFailed;
-            }
-            offset += rc;
+            ) catch return error.WriteFailed;
+            offset += written;
         }
     }
 
@@ -92,17 +88,13 @@ pub const FileStore = struct {
         var offset: usize = 0;
         while (offset < total_bytes) {
             const chunk = @min(4096, total_bytes - offset);
-            const rc = linux.syscall3(
-                .read,
-                @as(usize, @intCast(fd)),
-                @intFromPtr(&heats_bytes[offset]),
+            const nread = io_uring.read(
+                fd,
+                @as([*]u8, @ptrCast(&heats_bytes[offset])),
                 chunk,
-            );
-            if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
-                return error.ReadFailed;
-            }
-            if (rc == 0) break; // EOF
-            offset += rc;
+            ) catch return error.ReadFailed;
+            if (nread == 0) break; // EOF
+            offset += nread;
         }
 
         return pool;

@@ -266,26 +266,31 @@ pub const HttpServer = struct {
                         switch (conn.state) {
                             .Recv => {
                                 if (ev.result > 0) {
-                                    // RECV 成功：处理请求并发送响应
+                                    // RECV 成功：解析请求并路由
                                     conn.nread = @intCast(ev.result);
                                     self.metrics.inc_requests();
 
-                                    // 构建 HTTP 响应（简化：直接返回 200 OK）
-                                    const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
-                                    var resp_buf: [1024]u8 = undefined;
-                                    const response = fmt.bufPrint(&resp_buf,
-                                        "HTTP/1.1 200 OK\r\n" ++
-                                        "Content-Type: application/json\r\n" ++
-                                        "Content-Length: {d}\r\n" ++
-                                        "Connection: close\r\n" ++
-                                        "\r\n{s}",
-                                        .{body.len, body}
-                                    ) catch {
-                                        io_uring.Syscall.close(@intCast(conn.fd));
-                                        self.metrics.dec_connections();
-                                        self.removeConn(&conns, &conn_count, conn_idx);
-                                        return;
-                                    };
+                                    // 解析请求行（简化：只取第一行）
+                                    const raw = conn.buf[0..conn.nread];
+                                    const first_line_end = mem.indexOf(u8, raw, "\r\n") orelse raw.len;
+                                    const first_line = raw[0..first_line_end];
+
+                                    // 解析 "METHOD /path HTTP/1.1"
+                                    var iter = mem.splitSequence(u8, first_line, " ");
+                                    const method = iter.next() orelse "";
+                                    const full_path = iter.next() orelse "/";
+                                    _ = method;
+
+                                    // 分离路径和查询
+                                    var path: []const u8 = full_path;
+                                    var query: ?[]const u8 = null;
+                                    if (mem.indexOf(u8, full_path, "?")) |pos| {
+                                        path = full_path[0..pos];
+                                        query = full_path[pos + 1 ..];
+                                    }
+
+                                    // 路由分发
+                                    const response = self.routeAndRespond(path, query, raw[first_line_end..]);
 
                                     // 提交 SEND
                                     var send_iov = io_uring.Iovec{
@@ -335,6 +340,101 @@ pub const HttpServer = struct {
             conns[idx] = conns[conn_count.* - 1];
             conn_count.* -= 1;
         }
+    }
+
+    /// 路由并生成响应（零堆分配，栈缓冲区）
+    fn routeAndRespond(self: *HttpServer, path: []const u8, query: ?[]const u8, _body: []const u8) []const u8 {
+        _ = _body;
+        // /health 端点
+        if (mem.eql(u8, path, "/health")) {
+            return self.handleHealth(query);
+        }
+        // /metrics 端点（T2 修复：分离缓冲区，杜绝重叠）
+        if (mem.eql(u8, path, "/metrics")) {
+            return self.handleMetrics();
+        }
+        // /v1/infer 端点（占位）
+        if (mem.eql(u8, path, "/v1/infer")) {
+            return self.handleInferPlaceholder();
+        }
+        // 默认 404
+        return self.handleNotFound();
+    }
+
+    /// 处理 /health 请求
+    fn handleHealth(self: *HttpServer, query: ?[]const u8) []const u8 {
+        const verbose = if (query) |q| mem.indexOf(u8, q, "verbose=true") != null else false;
+        var buf: [1024]u8 = undefined;
+
+        if (verbose) {
+            const uptime_ms = self.metrics.get_uptime_ms();
+            const total_requests = self.metrics.get_total_requests();
+            const active = self.metrics.get_active_connections();
+            const errors = self.metrics.get_error_count();
+            const body = fmt.bufPrint(&buf,
+                "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}}",
+                .{ uptime_ms, total_requests, active, errors, self.shutting_down.load(.acquire) }
+            ) catch return self.handleNotFound();
+            return self.buildJsonResponse(&buf, body);
+        } else {
+            const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
+            return self.buildJsonResponse(&buf, body);
+        }
+    }
+
+    /// 处理 /metrics 请求（T2 修复：使用分离缓冲区）
+    fn handleMetrics(self: *HttpServer) []const u8 {
+        // 缓冲区1：用于 formatMetrics 输出（避免与响应缓冲区重叠）
+        var metrics_buf: [2048]u8 = undefined;
+        const metrics_len = metrics_mod.formatMetrics(&metrics_buf) catch {
+            return self.handleServerError();
+        };
+
+        // 缓冲区2：用于构建 HTTP 响应（与 metrics_buf 完全分离）
+        var resp_buf: [4096]u8 = undefined;
+        const response = fmt.bufPrint(&resp_buf,
+            "HTTP/1.1 200 OK\r\n" ++
+            "Content-Type: text/plain; version=0.0.4\r\n" ++
+            "Content-Length: {d}\r\n" ++
+            "Connection: close\r\n" ++
+            "\r\n{s}",
+            .{ metrics_len, metrics_buf[0..metrics_len] }
+        ) catch return self.handleServerError();
+
+        return response;
+    }
+
+    /// 处理 /v1/infer 占位
+    fn handleInferPlaceholder(self: *HttpServer) []const u8 {
+        var buf: [512]u8 = undefined;
+        const body = "{\"error\":\"Service Unavailable\",\"detail\":\"inference module not connected\"}";
+        return self.buildJsonResponse(&buf, body);
+    }
+
+    /// 404 Not Found
+    fn handleNotFound(self: *HttpServer) []const u8 {
+        _ = self;
+        return "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"error\":\"Not Found\"}";
+    }
+
+    /// 500 Internal Server Error
+    fn handleServerError(self: *HttpServer) []const u8 {
+        _ = self;
+        return "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\nInternal Server Error";
+    }
+
+    /// 构建 JSON 响应（辅助函数）
+    fn buildJsonResponse(self: *HttpServer, buf: []u8, body: []const u8) []const u8 {
+        _ = self;
+        const response = fmt.bufPrint(buf,
+            "HTTP/1.1 200 OK\r\n" ++
+            "Content-Type: application/json\r\n" ++
+            "Content-Length: {d}\r\n" ++
+            "Connection: close\r\n" ++
+            "\r\n{s}",
+            .{body.len, body}
+        ) catch return "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+        return response;
     }
 
     /// 检查服务器是否正在运行

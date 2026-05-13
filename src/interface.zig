@@ -16,6 +16,7 @@
 //   - 签名不匹配在编译期报 @compileError，精确定位错误
 
 // interface.zig: 纯类型锚点，无 std 运行时依赖
+const mem = @import("std").mem;
 const sub_brain = @import("sub_brain.zig");
 const token = @import("token.zig");
 
@@ -185,7 +186,7 @@ pub const ContractVerifier = struct {
             for (actual_errs) |actual_err| {
                 var found = false;
                 for (expected_errs) |expected_err| {
-                    if (actual_err.name == expected_err.name) {
+                    if (mem.eql(u8, actual_err.name, expected_err.name)) {
                         found = true;
                         break;
                     }

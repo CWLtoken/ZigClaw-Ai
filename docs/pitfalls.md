@@ -260,3 +260,48 @@
 > **架构师裁决**：军规不是可选项。违反军规的 PR 不予合并。
 > 如果军规阻碍了你的实现，说明设计有问题，不是军规有问题。
 
+---
+
+## E33: http_server 阻塞式 Syscall 伪装成异步（v3.2 修复）
+
+- **现象**: `http_server.zig` 的 `run()` 使用 `io_uring.Syscall.accept/recv/send` 直接调用，未经过 Reactor 异步事件循环
+- **根因**: 初始实现为简化版，未接入 reactor.zig 的异步路径
+- **解决**: 添加 `reactor.prepare_accept()`，重写 `run()` 为基于 `reactor.poll()` 的真正异步事件循环
+- **永久法则**: ⚠️ 入口层必须通过 Reactor 提交所有 I/O 操作
+
+## E34: /metrics 端点缓冲区重叠覆写（v3.2 修复）
+
+- **现象**: `formatMetrics` 和 `fmt.bufPrint` 使用同一块缓冲区，源与目标重叠
+- **解决**: 分离为 `metrics_buf`（2048B）和 `resp_buf`（4096B）
+- **永久法则**: ⚠️ `fmt.bufPrint` 的输出缓冲区和输入源绝对不能重叠
+
+## E35: BodyBufferPool @mod 槽冲突（v3.2 修复）
+
+- **现象**: `get_write_slice` 使用 `@mod(stream_id, 1024)` 直接映射槽位
+- **解决**: 优先使用 CAS `alloc_slot` 分配，槽满时回退
+- **永久法则**: ⚠️ 共享槽位分配必须使用原子操作
+
+## E36: file_store.zig API 风格不一致（v3.2 修复）
+
+- **现象**: 混用裸 `linux.syscall3` 和 `io_uring.Syscall`
+- **解决**: 统一使用 `io_uring.write`/`io_uring.read`
+- **永久法则**: ⚠️ 同一模块内必须统一使用项目封装层
+
+## E37: interface.zig comptime 字符串指针比较（v3.2 修复）
+
+- **现象**: `actual_err.name == expected_err.name` 比较指针地址
+- **解决**: 改为 `mem.eql(u8, ...)`
+- **永久法则**: ⚠️ 字符串比较必须使用 `mem.eql`
+
+## E38: htons 重复定义（v3.2 修复）
+
+- **现象**: `htons` 在顶层和 Syscall 内各定义一次
+- **解决**: 删除 Syscall.htons，统一使用顶层 `@byteSwap`
+- **永久法则**: ⚠️ 同一功能禁止重复定义
+
+## E39: protocol.zig 魔法数字（v3.2 修复）
+
+- **现象**: `if (io.result != 13)` 无注释
+- **解决**: 改为 `@sizeOf(core.TokenStreamHeader)`
+- **永久法则**: ⚠️ 魔法数字必须替换为具名常量
+
