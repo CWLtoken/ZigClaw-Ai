@@ -222,6 +222,9 @@ pub const Reactor = struct {
             return .Idle;
         }
 
+        // 递增 cq_head，标记 CQE 已被消费
+        @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
+
         return Event{
             .IoComplete = .{
                 .user_data = req_ptr.stream_id,
