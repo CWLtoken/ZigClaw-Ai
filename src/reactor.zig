@@ -58,7 +58,15 @@ pub const Reactor = struct {
 
     /// 向 SQ 提交一个 RECV 请求（延迟提交策略）
     pub fn prepare_recv(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
+        // SQ 满溢防护：检查内核 sq_head，确保有可用槽位
+        const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
+        if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+            // SQ 已满，先 flush 再重试
+            self.flush() catch |err| {
+                return err;
+            };
+        }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
         self.ring.sq_entries[idx] = .{
@@ -93,9 +101,58 @@ pub const Reactor = struct {
         }
     }
 
+    /// 向 SQ 提交一个 ACCEPT 请求（延迟提交策略）
+    pub fn prepare_accept(self: *Reactor, listen_fd: i32, addr: ?*io_uring.SockAddrIn, addrlen: ?*u32, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
+        const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
+        const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
+        if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+            self.flush() catch |err| {
+                return err;
+            };
+        }
+        const idx = sq_tail & self.ring.sq_ring_mask;
+
+        self.ring.sq_entries[idx] = .{
+            .opcode = @intFromEnum(io_uring.IOOp.Accept),
+            .flags = 0,
+            .ioprio = 0,
+            .fd = listen_fd,
+            .off = 0,
+            .addr = if (addr) |a| @intFromPtr(a) else 0,
+            .len = if (addrlen) |al| @as(u32, @intCast(@intFromPtr(al))) else 0,
+            .__pad1 = 0,
+            .user_data = @intFromPtr(io_req),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .__pad2 = 0,
+        };
+        self.ring.sq_array[idx] = idx;
+        @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
+
+        self.pending_sqe_count += 1;
+        if (self.pending_sqe_count >= BATCH_THRESHOLD) {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
+                return err;
+            }
+        }
+    }
+
     /// 向 SQ 提交一个 SEND 请求（延迟提交策略）
     pub fn prepare_send(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
+        // SQ 满溢防护：检查内核 sq_head，确保有可用槽位
+        const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
+        if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+            self.flush() catch |err| {
+                return err;
+            };
+        }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
         self.ring.sq_entries[idx] = .{
@@ -152,14 +209,27 @@ pub const Reactor = struct {
         const idx = cq_head & self.ring.cq_ring_mask;
         const cqe = &self.ring.cqes[idx];
 
+        // 安全校验：user_data 必须非零且指针对齐
+        if (cqe.user_data == 0) {
+            log.warn("Reactor.poll: cqe.user_data is zero, skipping", .{});
+            @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
+            return .Idle;
+        }
+        const req_ptr = @as(*io_uring.IoRequest, @ptrFromInt(cqe.user_data));
+        if (@intFromPtr(req_ptr) % @alignOf(io_uring.IoRequest) != 0) {
+            log.warn("Reactor.poll: cqe.user_data misaligned: {x}", .{cqe.user_data});
+            @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
+            return .Idle;
+        }
+
+        // 递增 cq_head，标记 CQE 已被消费
         @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
 
-        const req = @as(*io_uring.IoRequest, @ptrFromInt(cqe.user_data));
         return Event{
             .IoComplete = .{
-                .user_data = req.stream_id,
+                .user_data = req_ptr.stream_id,
                 .result = @as(u32, @bitCast(cqe.res)),
-                .buf_ptr = req.buf_ptr,
+                .buf_ptr = req_ptr.buf_ptr,
             },
         };
     }

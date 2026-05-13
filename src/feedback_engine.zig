@@ -12,7 +12,7 @@
 //   R1: execution.ring_full_count > 10 → 建议 enable_sq_poll
 //   R2: router.route_miss > router.route_hit * 0.2 → 建议 adjust_pool_size（hint: 路由表扩容）
 //   R3: storage.heat_pool_miss > storage.heat_pool_hit → 建议 adjust_pool_size（hint: 热度池扩容）
-//   R4: execution.syscall_fallback_count > 5 → 建议 disable_feature (direct IO fallback)
+//   R4: execution.syscall_fallback_count > 5 → 建议 adjust_timeout（降低 direct IO fallback 频率）
 //   R5: entry.error_count > entry.request_count * 0.05 → 建议 adjust_timeout
 
 const debug = @import("std").debug;
@@ -42,7 +42,7 @@ pub const SimpleLearner = struct {
         router: feedback.RouterMetrics,
         storage: feedback.StorageMetrics,
     ) ?feedback.Suggestion {
-        // R4: syscall 过多 → 禁用 direct IO fallback（最高优先级）
+        // R4: syscall 过多 → 建议调整超时（降低 direct IO fallback 频率）
         if (exec.syscall_fallback_count > SYSCALL_FALLBACK_THRESHOLD) {
             return feedback.Suggestion{
                 .layer = .execution,

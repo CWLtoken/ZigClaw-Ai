@@ -394,11 +394,6 @@ pub const Syscall = struct {
     pub const SOCK_STREAM: u32 = 1;
     pub const INADDR_LOOPBACK: u32 = 0x0100007F;
 
-    /// htons: host -> network byte order (16-bit)
-    pub fn htons(host: u16) u16 {
-        return ((host & 0xFF) << 8) | ((host >> 8) & 0xFF);
-    }
-
     /// socket(domain, type, protocol) -> fd
     pub fn socket(domain: u32, sock_type: u32, protocol: u32) SyscallError!i32 {
         const rc = std_os.syscall3(.socket, domain, sock_type, protocol);

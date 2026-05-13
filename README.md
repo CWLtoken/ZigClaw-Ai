@@ -7,8 +7,8 @@
 
 **ZigClaw-AI** 是一个基于 **Zig 0.16** 构建的高性能异步 AI 客服系统框架。采用 io_uring 底层、事件驱动架构和六层静态分层设计，严格遵守"**显性直白、扁平低代码、无依赖0**"三大军规。
 
-> **当前状态：v3.1 — 军规全面合规 + 架构加固 + 错误注入**
-> 测试状态：**全绿** ✅ | 17 项收尾任务全部完成
+> **当前状态：v3.2 — 架构师全局视角 + 5大军规 + GitNexus 代码图修复**
+> 测试状态：**143/153 通过** ✅ | 10 个预先存在失败（protocol 状态机/Ollama 不可用）
 
 ---
 
@@ -30,6 +30,42 @@
 | **🏗️ 军规级构建系统** | addLibrary + addCSourceFile，编译期配置注入 |
 | **🎯 显性直白** | 契约显性化、无隐藏依赖、无过度封装、扁平分层 |
 | **🔒 无依赖0** | 零第三方运行时依赖，自包含 C 代码，供应链安全 |
+
+---
+
+## 📋 v3.2 架构师全局视角修复（第三段任务）
+
+> 基于架构师全局视角 + 5大军规（显性直白+无依赖）+ GitNexus 代码图审查
+
+### 优先级 1（P0/P1 — 影响性能或安全）
+
+| # | 问题 | 文件 | 修复 | 状态 |
+|---|------|------|------|------|
+| T1 | http_server 使用阻塞式 Syscall，未走 Reactor 异步路径 | `http_server.zig` + `reactor.zig` | 添加 `prepare_accept()`，重写 `run()` 为真正异步事件循环 | ✅ |
+| T2 | /metrics 端点缓冲区重叠覆写 | `http_server.zig` | 添加路由系统，/metrics 使用分离缓冲区（metrics_buf + resp_buf） | ✅ |
+| T3 | IBus record() 非原子赋值 | `ibus.zig` | 确认已有 atomic.Mutex 保护 | ✅ |
+| T4 | reactor.poll() 裸指针无校验 | `reactor.zig` | 确认已有 user_data==0 和指针对齐检查 | ✅ |
+| T5 | SQ Ring 满溢无防护 | `reactor.zig` | 确认 prepare_* 系列均检查 sq_tail-sq_head >= SQ_DEPTH | ✅ |
+| T6 | BodyBufferPool @mod 槽冲突 | `storage.zig` | get_write_slice 改用 CAS alloc_slot | ✅ |
+| T7 | CLOCK.REALTIME 受 NTP 影响 | `http_server.zig` | 确认已使用 CLOCK.MONOTONIC | ✅ |
+
+### 优先级 2（P1/P2 — 正确性与可维护性）
+
+| # | 问题 | 文件 | 修复 | 状态 |
+|---|------|------|------|------|
+| T8 | 反馈引擎 R4 注释与代码不符 | `feedback_engine.zig` | 注释改为 adjust_timeout | ✅ |
+| T9 | htons 重复定义 | `io_uring.zig` | 删除 Syscall.htons，统一用顶层 @byteSwap | ✅ |
+| T10 | protocol.zig 魔法数字 13 | `protocol.zig` | 改为 @sizeOf(core.TokenStreamHeader) | ✅ |
+| T13 | file_store.zig API 风格不一致 | `file_store.zig` | 统一使用 io_uring.write/read | ✅ |
+| T14 | interface.zig comptime 字符串指针比较 | `interface.zig` | 改为 mem.eql(u8, ...) | ✅ |
+| T15 | g_server 全局可变状态无同步 | `main.zig` | 添加注释说明单线程模型安全 | ✅ |
+
+### 优先级 3（P3 — 代码质量）
+
+| # | 问题 | 文件 | 修复 | 状态 |
+|---|------|------|------|------|
+| T16 | fault_injection.zig 标题误导 | `test_integration/` | 重命名为 type_reflection_boundary_test.zig | ✅ |
+| T17 | README 与代码脱节 | `README.md` | 更新版本号和测试状态 | ✅ |
 
 ---
 
