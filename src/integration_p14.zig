@@ -25,7 +25,7 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
     var actual_addr: io_uring.SockAddrIn = undefined;
     var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
     try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
-    const actual_port = io_uring.Syscall.htons(actual_addr.port);
+    const actual_port = io_uring.htons(actual_addr.port);
 
     // 5. submit ACCEPT via io_uring
     var client_addr: io_uring.SockAddrIn = undefined;
@@ -58,7 +58,7 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
     defer io_uring.Syscall.close(@intCast(connect_fd));
     var server_addr = io_uring.SockAddrIn{
         .family = 2,
-        .port = io_uring.Syscall.htons(actual_port),
+        .port = io_uring.htons(actual_port),
         .addr = 0x0100007F,
     };
     try io_uring.Syscall.connect(connect_fd_u32, &server_addr, @sizeOf(io_uring.SockAddrIn));

@@ -3,23 +3,25 @@
 // DRD-058: V3 IBus 内省总线 — 真实可操作的观测总线
 //
 // 功能：
-//   1. 全局 LayerMetrics 原子变量，各层通过 record() 更新
+//   1. 全局 LayerMetrics 原子变量（Mutex 保护），各层通过 record() 更新
 //   2. formatBusStatus() 遍历所有原子变量，格式化为 JSON
 //   3. 保留原有 emit() 日志事件功能
 //
 // 架构约束：
 //   - 不动 reactor.zig / protocol.zig / io_uring.zig
 //   - 对齐 feedback.zig 中的 LayerMetrics 联合类型
-//   - 无堆：所有指标存储在 atomic.Value 或全局静态变量中
+//   - 无堆：所有指标存储在 Mutex 保护的全局静态变量中
+//   - 原子性：所有全局指标通过 std.Mutex 保护，消除数据竞争
 
-const atomic = @import("std").atomic;
 const debug = @import("std").debug;
 const feedback = @import("feedback.zig");
+const mem = @import("std").mem;
+const atomic = @import("std").atomic;
 
 
 
 // ============================================================================
-// DRD-058: LayerMetrics 原子变量
+// DRD-058: LayerMetrics 原子变量（Mutex 保护）
 // ============================================================================
 
 var g_entry_metrics: feedback.EntryMetrics = .{
@@ -29,6 +31,7 @@ var g_entry_metrics: feedback.EntryMetrics = .{
     .p99_latency_us = 0,
     .active_connections = 0,
 };
+var g_entry_mu: atomic.Mutex = .unlocked;
 
 var g_orch_metrics: feedback.OrchMetrics = .{
     .modality_switch_count = 0,
@@ -36,6 +39,7 @@ var g_orch_metrics: feedback.OrchMetrics = .{
     .token_count = 0,
     .brain_hit_count = [_]u64{0} ** 8,
 };
+var g_orch_mu: atomic.Mutex = .unlocked;
 
 var g_exec_metrics: feedback.ExecMetrics = .{
     .uring_submit_count = 0,
@@ -43,12 +47,14 @@ var g_exec_metrics: feedback.ExecMetrics = .{
     .syscall_fallback_count = 0,
     .ring_full_count = 0,
 };
+var g_exec_mu: atomic.Mutex = .unlocked;
 
 var g_router_metrics: feedback.RouterMetrics = .{
     .route_hit = 0,
     .route_miss = 0,
     .middleware_reject = 0,
 };
+var g_router_mu: atomic.Mutex = .unlocked;
 
 var g_storage_metrics: feedback.StorageMetrics = .{
     .heat_pool_hit = 0,
@@ -57,9 +63,21 @@ var g_storage_metrics: feedback.StorageMetrics = .{
     .vector_search_count = 0,
     .arena_bytes_allocated = 0,
 };
+var g_storage_mu: atomic.Mutex = .unlocked;
 
 /// 初始化所有指标（在 main.zig 启动时调用）
 pub fn init() void {
+    while (!g_entry_mu.tryLock()) {}
+    defer g_entry_mu.unlock();
+    while (!g_orch_mu.tryLock()) {}
+    defer g_orch_mu.unlock();
+    while (!g_exec_mu.tryLock()) {}
+    defer g_exec_mu.unlock();
+    while (!g_router_mu.tryLock()) {}
+    defer g_router_mu.unlock();
+    while (!g_storage_mu.tryLock()) {}
+    defer g_storage_mu.unlock();
+
     g_entry_metrics = .{
         .request_count = 0,
         .error_count = 0,
@@ -94,20 +112,50 @@ pub fn init() void {
 }
 
 // ============================================================================
-// DRD-058: record() — 各层调用更新指标
+// DRD-058: record() — 各层调用更新指标（Mutex 保护，消除数据竞争）
 // ============================================================================
 pub fn record(layer: feedback.Layer, metrics: feedback.LayerMetrics) void {
     switch (layer) {
-        .entry => g_entry_metrics = metrics.entry,
-        .orchestrator => g_orch_metrics = metrics.orchestrator,
-        .execution => g_exec_metrics = metrics.execution,
-        .router => g_router_metrics = metrics.router,
-        .storage => g_storage_metrics = metrics.storage,
+        .entry => {
+            while (!g_entry_mu.tryLock()) {}
+            defer g_entry_mu.unlock();
+            g_entry_metrics = metrics.entry;
+        },
+        .orchestrator => {
+            while (!g_orch_mu.tryLock()) {}
+            defer g_orch_mu.unlock();
+            g_orch_metrics = metrics.orchestrator;
+        },
+        .execution => {
+            while (!g_exec_mu.tryLock()) {}
+            defer g_exec_mu.unlock();
+            g_exec_metrics = metrics.execution;
+        },
+        .router => {
+            while (!g_router_mu.tryLock()) {}
+            defer g_router_mu.unlock();
+            g_router_metrics = metrics.router;
+        },
+        .storage => {
+            while (!g_storage_mu.tryLock()) {}
+            defer g_storage_mu.unlock();
+            g_storage_metrics = metrics.storage;
+        },
     }
 }
 
 /// 读取所有层指标为统一的全量快照（供上层查询）
 pub fn readMetrics() feedback.AllMetrics {
+    while (!g_entry_mu.tryLock()) {}
+    defer g_entry_mu.unlock();
+    while (!g_orch_mu.tryLock()) {}
+    defer g_orch_mu.unlock();
+    while (!g_exec_mu.tryLock()) {}
+    defer g_exec_mu.unlock();
+    while (!g_router_mu.tryLock()) {}
+    defer g_router_mu.unlock();
+    while (!g_storage_mu.tryLock()) {}
+    defer g_storage_mu.unlock();
     return .{
         .entry = g_entry_metrics,
         .orchestrator = g_orch_metrics,
@@ -123,6 +171,23 @@ pub fn readMetrics() feedback.AllMetrics {
 // ============================================================================
 
 pub fn formatBusStatus(buf: []u8) usize {
+    // 加锁读取所有指标快照
+    while (!g_entry_mu.tryLock()) {}
+    const entry = g_entry_metrics;
+    g_entry_mu.unlock();
+    while (!g_orch_mu.tryLock()) {}
+    const orch = g_orch_metrics;
+    g_orch_mu.unlock();
+    while (!g_exec_mu.tryLock()) {}
+    const exec = g_exec_metrics;
+    g_exec_mu.unlock();
+    while (!g_router_mu.tryLock()) {}
+    const router = g_router_metrics;
+    g_router_mu.unlock();
+    while (!g_storage_mu.tryLock()) {}
+    const storage = g_storage_metrics;
+    g_storage_mu.unlock();
+
     const w = buf;
 
     // 使用简单的 JSON 拼接（无堆分配）
@@ -142,76 +207,76 @@ pub fn formatBusStatus(buf: []u8) usize {
     // entry 层
     append(w, &pos, "  \"entry\": {\n");
     append(w, &pos, "    \"request_count\": ");
-    pos += printU64(w[pos..], g_entry_metrics.request_count);
+    pos += printU64(w[pos..], entry.request_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"error_count\": ");
-    pos += printU64(w[pos..], g_entry_metrics.error_count);
+    pos += printU64(w[pos..], entry.error_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"p50_latency_us\": ");
-    pos += printU64(w[pos..], g_entry_metrics.p50_latency_us);
+    pos += printU64(w[pos..], entry.p50_latency_us);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"p99_latency_us\": ");
-    pos += printU64(w[pos..], g_entry_metrics.p99_latency_us);
+    pos += printU64(w[pos..], entry.p99_latency_us);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"active_connections\": ");
-    pos += printU32(w[pos..], g_entry_metrics.active_connections);
+    pos += printU32(w[pos..], entry.active_connections);
     append(w, &pos, "\n  },\n");
 
     // orchestrator 层
     append(w, &pos, "  \"orchestrator\": {\n");
     append(w, &pos, "    \"modality_switch_count\": ");
-    pos += printU64(w[pos..], g_orch_metrics.modality_switch_count);
+    pos += printU64(w[pos..], orch.modality_switch_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"quantize_time_us\": ");
-    pos += printU64(w[pos..], g_orch_metrics.quantize_time_us);
+    pos += printU64(w[pos..], orch.quantize_time_us);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"token_count\": ");
-    pos += printU64(w[pos..], g_orch_metrics.token_count);
+    pos += printU64(w[pos..], orch.token_count);
     append(w, &pos, "\n  },\n");
 
     // execution 层
     append(w, &pos, "  \"execution\": {\n");
     append(w, &pos, "    \"uring_submit_count\": ");
-    pos += printU64(w[pos..], g_exec_metrics.uring_submit_count);
+    pos += printU64(w[pos..], exec.uring_submit_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"uring_cqe_count\": ");
-    pos += printU64(w[pos..], g_exec_metrics.uring_cqe_count);
+    pos += printU64(w[pos..], exec.uring_cqe_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"syscall_fallback_count\": ");
-    pos += printU64(w[pos..], g_exec_metrics.syscall_fallback_count);
+    pos += printU64(w[pos..], exec.syscall_fallback_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"ring_full_count\": ");
-    pos += printU64(w[pos..], g_exec_metrics.ring_full_count);
+    pos += printU64(w[pos..], exec.ring_full_count);
     append(w, &pos, "\n  },\n");
 
     // router 层
     append(w, &pos, "  \"router\": {\n");
     append(w, &pos, "    \"route_hit\": ");
-    pos += printU64(w[pos..], g_router_metrics.route_hit);
+    pos += printU64(w[pos..], router.route_hit);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"route_miss\": ");
-    pos += printU64(w[pos..], g_router_metrics.route_miss);
+    pos += printU64(w[pos..], router.route_miss);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"middleware_reject\": ");
-    pos += printU64(w[pos..], g_router_metrics.middleware_reject);
+    pos += printU64(w[pos..], router.middleware_reject);
     append(w, &pos, "\n  },\n");
 
     // storage 层
     append(w, &pos, "  \"storage\": {\n");
     append(w, &pos, "    \"heat_pool_hit\": ");
-    pos += printU64(w[pos..], g_storage_metrics.heat_pool_hit);
+    pos += printU64(w[pos..], storage.heat_pool_hit);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"heat_pool_miss\": ");
-    pos += printU64(w[pos..], g_storage_metrics.heat_pool_miss);
+    pos += printU64(w[pos..], storage.heat_pool_miss);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"ssd_flush_count\": ");
-    pos += printU64(w[pos..], g_storage_metrics.ssd_flush_count);
+    pos += printU64(w[pos..], storage.ssd_flush_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"vector_search_count\": ");
-    pos += printU64(w[pos..], g_storage_metrics.vector_search_count);
+    pos += printU64(w[pos..], storage.vector_search_count);
     append(w, &pos, ",\n");
     append(w, &pos, "    \"arena_bytes_allocated\": ");
-    pos += printU64(w[pos..], g_storage_metrics.arena_bytes_allocated);
+    pos += printU64(w[pos..], storage.arena_bytes_allocated);
     append(w, &pos, "\n  }\n");
 
     append(w, &pos, "}\n");
@@ -295,41 +360,55 @@ fn writeU32Frame(buf: []u8, field_id: FieldId, val: u32) usize {
 /// 序列化所有指标为二进制帧流
 /// 格式: 连续的多帧，每帧 [4字节长度][1字节字段ID][N字节值]
 /// 返回写入的总字节数
-/// sidecar 解析此二进制流后可转 Prometheus/OTLP:
-///   - Prometheus: 按 field_id 映射为 metric name + value
-///   - OTLP: 映射为 NumberDataPoint，field_id 作为 metric name 后缀
 pub fn formatBinaryMetrics(buf: []u8) usize {
+    // 加锁读取所有指标快照
+    while (!g_entry_mu.tryLock()) {}
+    const entry = g_entry_metrics;
+    g_entry_mu.unlock();
+    while (!g_orch_mu.tryLock()) {}
+    const orch = g_orch_metrics;
+    g_orch_mu.unlock();
+    while (!g_exec_mu.tryLock()) {}
+    const exec = g_exec_metrics;
+    g_exec_mu.unlock();
+    while (!g_router_mu.tryLock()) {}
+    const router = g_router_metrics;
+    g_router_mu.unlock();
+    while (!g_storage_mu.tryLock()) {}
+    const storage = g_storage_metrics;
+    g_storage_mu.unlock();
+
     var pos: usize = 0;
 
     // entry 层
-    pos += writeU64Frame(buf[pos..], .entry_request_count, g_entry_metrics.request_count);
-    pos += writeU64Frame(buf[pos..], .entry_error_count, g_entry_metrics.error_count);
-    pos += writeU64Frame(buf[pos..], .entry_p50_latency_us, g_entry_metrics.p50_latency_us);
-    pos += writeU64Frame(buf[pos..], .entry_p99_latency_us, g_entry_metrics.p99_latency_us);
-    pos += writeU32Frame(buf[pos..], .entry_active_connections, g_entry_metrics.active_connections);
+    pos += writeU64Frame(buf[pos..], .entry_request_count, entry.request_count);
+    pos += writeU64Frame(buf[pos..], .entry_error_count, entry.error_count);
+    pos += writeU64Frame(buf[pos..], .entry_p50_latency_us, entry.p50_latency_us);
+    pos += writeU64Frame(buf[pos..], .entry_p99_latency_us, entry.p99_latency_us);
+    pos += writeU32Frame(buf[pos..], .entry_active_connections, entry.active_connections);
 
     // orchestrator 层
-    pos += writeU64Frame(buf[pos..], .orch_modality_switch, g_orch_metrics.modality_switch_count);
-    pos += writeU64Frame(buf[pos..], .orch_quantize_time_us, g_orch_metrics.quantize_time_us);
-    pos += writeU64Frame(buf[pos..], .orch_token_count, g_orch_metrics.token_count);
+    pos += writeU64Frame(buf[pos..], .orch_modality_switch, orch.modality_switch_count);
+    pos += writeU64Frame(buf[pos..], .orch_quantize_time_us, orch.quantize_time_us);
+    pos += writeU64Frame(buf[pos..], .orch_token_count, orch.token_count);
 
     // execution 层
-    pos += writeU64Frame(buf[pos..], .exec_uring_submit, g_exec_metrics.uring_submit_count);
-    pos += writeU64Frame(buf[pos..], .exec_uring_cqe, g_exec_metrics.uring_cqe_count);
-    pos += writeU64Frame(buf[pos..], .exec_syscall_fallback, g_exec_metrics.syscall_fallback_count);
-    pos += writeU64Frame(buf[pos..], .exec_ring_full, g_exec_metrics.ring_full_count);
+    pos += writeU64Frame(buf[pos..], .exec_uring_submit, exec.uring_submit_count);
+    pos += writeU64Frame(buf[pos..], .exec_uring_cqe, exec.uring_cqe_count);
+    pos += writeU64Frame(buf[pos..], .exec_syscall_fallback, exec.syscall_fallback_count);
+    pos += writeU64Frame(buf[pos..], .exec_ring_full, exec.ring_full_count);
 
     // router 层
-    pos += writeU64Frame(buf[pos..], .router_hit, g_router_metrics.route_hit);
-    pos += writeU64Frame(buf[pos..], .router_miss, g_router_metrics.route_miss);
-    pos += writeU64Frame(buf[pos..], .router_middleware_reject, g_router_metrics.middleware_reject);
+    pos += writeU64Frame(buf[pos..], .router_hit, router.route_hit);
+    pos += writeU64Frame(buf[pos..], .router_miss, router.route_miss);
+    pos += writeU64Frame(buf[pos..], .router_middleware_reject, router.middleware_reject);
 
     // storage 层
-    pos += writeU64Frame(buf[pos..], .storage_heat_hit, g_storage_metrics.heat_pool_hit);
-    pos += writeU64Frame(buf[pos..], .storage_heat_miss, g_storage_metrics.heat_pool_miss);
-    pos += writeU64Frame(buf[pos..], .storage_ssd_flush, g_storage_metrics.ssd_flush_count);
-    pos += writeU64Frame(buf[pos..], .storage_vector_search, g_storage_metrics.vector_search_count);
-    pos += writeU64Frame(buf[pos..], .storage_arena_bytes, g_storage_metrics.arena_bytes_allocated);
+    pos += writeU64Frame(buf[pos..], .storage_heat_hit, storage.heat_pool_hit);
+    pos += writeU64Frame(buf[pos..], .storage_heat_miss, storage.heat_pool_miss);
+    pos += writeU64Frame(buf[pos..], .storage_ssd_flush, storage.ssd_flush_count);
+    pos += writeU64Frame(buf[pos..], .storage_vector_search, storage.vector_search_count);
+    pos += writeU64Frame(buf[pos..], .storage_arena_bytes, storage.arena_bytes_allocated);
 
     return pos;
 }

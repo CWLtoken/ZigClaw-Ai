@@ -1,6 +1,7 @@
 // src/protocol.zig
 // ZigClaw V2.4 | 系统大脑 | DMA自省 | ALU溢出防御 | Phase5真实内存搬运
 const mem = @import("std").mem;
+const core = @import("core.zig");
 const storage = @import("storage.zig");
 const reactor = @import("reactor.zig");
 const io_uring = @import("io_uring.zig");
@@ -42,7 +43,7 @@ pub const Protocol = struct {
                             self.state = .{ .Error = .{ .reason = "dma stream mismatch" } };
                             return self.state;
                         }
-                        if (io.result != 13) {
+                        if (io.result != @sizeOf(core.TokenStreamHeader)) {
                             self.state = .{ .Error = .{ .reason = "invalid header dma length" } };
                             return self.state;
                         }

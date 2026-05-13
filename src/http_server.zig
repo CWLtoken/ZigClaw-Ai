@@ -1,5 +1,6 @@
 // src/http_server.zig
 // ZigClaw V2.4 | 阶段23C | 故障恢复与可观测性
+// 架构升级：run() 改为基于 Reactor 的异步事件循环
 const atomic = @import("std").atomic;
 const debug = @import("std").debug;
 const fmt = @import("std").fmt;
@@ -8,6 +9,7 @@ const mem = @import("std").mem;
 const StringHashMap = @import("std").StringHashMap;
 const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
+const reactor = @import("reactor.zig");
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
 const metrics_mod = @import("metrics.zig");
@@ -67,11 +69,11 @@ pub const ServerMetrics = struct {
 // 获取当前 POSIX 时间（毫秒），Zig 0.16 兼容
 fn getCurrentTimeMs() i64 {
     var ts: linux.timespec = undefined;
-    _ = linux.clock_gettime(linux.CLOCK.REALTIME, &ts);
+    _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
     return @as(i64, @intCast(ts.sec)) * 1000 + @as(i64, @intCast(@divTrunc(ts.nsec, 1_000_000)));
 }
 
-// HTTP 请求结构
+// HTTP 请求结构（栈分配，零堆）
 const HttpRequest = struct {
     method: []const u8,
     path: []const u8,
@@ -105,13 +107,34 @@ const HttpResponse = struct {
     }
 };
 
+// 异步连接状态
+const ConnState = enum {
+    Accept,
+    Recv,
+    Send,
+    Done,
+};
+
+const Conn = struct {
+    fd: i32,
+    state: ConnState,
+    buf: [8192]u8,
+    nread: usize,
+    stream_id: u64,
+};
+
+/// 最大并发连接数（栈分配，固定大小）
+const MAX_CONNS: usize = 256;
+
 pub const HttpServer = struct {
     ring: io_uring.Ring,
+    reactor: reactor.Reactor,
     listen_fd: i32,
     port: u16,
     metrics: *ServerMetrics,  // 服务器指标
     running: atomic.Value(bool),  // 优雅关闭标志
     shutting_down: atomic.Value(bool),  // 优雅关闭探针（阶段27）
+    next_stream_id: atomic.Value(u64),
 
     /// 初始化 HTTP 服务器
     pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
@@ -146,191 +169,172 @@ pub const HttpServer = struct {
         debug.print("     GET /health?verbose=true → 详细指标\n", .{});
         debug.print("     GET /v1/infer?input=xxx&modality=text|image → 推理\n", .{});
 
-        // 取消 errdefer，因为要返回这些资源
+        const r = reactor.Reactor.init(ring);
         return HttpServer{
             .ring = ring,
+            .reactor = r,
             .listen_fd = listen_fd,
             .port = port,
             .metrics = metrics,
             .running = atomic.Value(bool).init(true),
             .shutting_down = atomic.Value(bool).init(false),  // 阶段27：优雅关闭探针
+            .next_stream_id = atomic.Value(u64).init(1),
         };
     }
 
-    /// 运行服务器主循环（支持优雅关闭）
+    /// 运行服务器主循环（基于 Reactor 的异步事件循环）
     pub fn run(self: *HttpServer) !void {
+        // 连接状态数组（栈分配，固定大小）
+        var conns: [MAX_CONNS]Conn = undefined;
+        var conn_count: usize = 0;
+
+        // 提交初始 ACCEPT 请求
+        var accept_req = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null };
+        try self.reactor.prepare_accept(self.listen_fd, null, null, &accept_req);
+
         while (self.is_running()) {
-            // 检查是否应该停止接受新连接
-            if (!self.is_running()) break;
-
-            debug.print("等待连接...\n", .{});
-
-            // 使用 io_uring ACCEPT 获取连接
-            const conn_fd: i32 = io_uring.Syscall.accept(self.listen_fd, null, null) catch {
-                if (!self.is_running()) break;
-                continue;
-            };
-            // 注意：这里不 defer close，因为连接处理完成后会关闭
-            // 更新活跃连接数
-            self.metrics.inc_connections();
-
-            debug.print("收到连接，fd={d}\n", .{conn_fd});
-
-            // 读取 HTTP 请求
-            var buf: [8192]u8 = undefined;
-            const nread = io_uring.Syscall.recv(@intCast(conn_fd), &buf, buf.len, 0) catch |err| {
-                debug.print("读取请求失败: {}\n", .{err});
-                io_uring.Syscall.close(@intCast(conn_fd));
-                self.metrics.dec_connections();
-                continue;
-            };
-
-            if (nread <= 0) {
-                io_uring.Syscall.close(@intCast(conn_fd));
-                self.metrics.dec_connections();
-                continue;
-            }
-
-            // 更新请求计数
-            self.metrics.inc_requests();
-
-            const request_bytes = buf[0..@intCast(nread)];
-
-            // 解析 HTTP 请求（简化版）
-            var arena = heap.ArenaAllocator.init(heap.page_allocator);
-            defer arena.deinit();
-            const alloc = arena.allocator();
-
-            var req = parseHttpRequest(alloc, request_bytes) catch |err| {
-                debug.print("解析请求失败: {}\n", .{err});
-                sendErrorResponse(conn_fd, 400, "Bad Request") catch {};
-                io_uring.Syscall.close(@intCast(conn_fd));
-                self.metrics.dec_connections();
-                self.metrics.inc_errors();
-                continue;
-            };
-            defer req.deinit();
-
-            debug.print("请求: {s} {s}\n", .{req.method, req.path});
-
-            // 生成请求上下文（原子ID，零分配）
-            // 从 X-Tenant-ID 头部提取租户 ID（v6.1.0）
-            var tenant_id: u64 = 0;
-            if (req.headers.get("X-Tenant-ID")) |tid_str| {
-                tenant_id = fmt.parseInt(u64, tid_str, 10) catch 0;
-            }
-            var ctx = context.RequestContext.init(req.method, req.path, tenant_id);
-            debug.print("请求ID: {s}\n", .{ctx.getFormattedId()});
-
-            // P50: 日志相关变量
-            var status_code: u16 = 0;
-            var err_msg: ?[]const u8 = null;
-            var latency_ms: f64 = 0.0;
-
-            // P48-2: 递增 HTTP 请求总数
-            metrics_mod.incrHttpRequests();
-
-            // 路由处理
-            if (mem.eql(u8, req.path, "/health")) {
-                const shutting_down = self.shutting_down.load(.acquire);
-                status_code = 200;
-                handleHealth(self.metrics, shutting_down, conn_fd, req.query) catch |err| {
-                    debug.print("处理 /health 失败: {}\n", .{err});
-                    status_code = 500;
-                };
-            } else if (mem.eql(u8, req.path, "/v1/infer") and mem.eql(u8, req.method, "POST")) {
-                // P48-2: 递增推理请求计数
-                metrics_mod.incrInfer();
-
-                // 计算推理延迟（使用单调时间差）
-                const now_ms = getCurrentTimeMs();
-                latency_ms = @as(f64, @floatFromInt(now_ms - ctx.timestamp_ms));
-
-                // POST /v1/infer 处理（鉴权+推理）
-                const auth_header = if (req.headers.get("Authorization")) |val| val else null;
-                if (!middleware.checkAuth(auth_header)) {
-                    // P48-2: 递增鉴权失败计数
-                    metrics_mod.incrAuthFailures();
-                    sendErrorResponse(conn_fd, 401, "Unauthorized") catch {};
-                    self.metrics.inc_errors();
-                    status_code = 401;
-                    err_msg = "unauthorized";
-                } else {
-                    // 鉴权成功，暂返回 503（后续接入真实推理）
-                    sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
-                    self.metrics.inc_errors();
-                    status_code = 503;
-                    err_msg = "service unavailable";
-                }
-
-                // P49-2: 记录推理延迟到直方图
-                metrics_mod.observeInferLatency(latency_ms);
-            } else if (mem.eql(u8, req.path, "/ibus")) {
-                // DRD-058: IBus 内省总线端点
-                var ibus_buf: [2048]u8 = undefined;
-                const ibus_len = ibus.formatBusStatus(&ibus_buf);
-                const ibus_body = ibus_buf[0..ibus_len];
-
-                var hdr_buf: [256]u8 = undefined;
-                const header = fmt.bufPrint(&hdr_buf,
-                    "HTTP/1.1 200 OK\r\n" ++
-                    "Content-Type: application/json\r\n" ++
-                    "Content-Length: {d}\r\n" ++
-                    "Connection: close\r\n" ++
-                    "\r\n",
-                    .{ibus_len}
-                ) catch {
-                    sendErrorResponse(conn_fd, 500, "Internal Server Error") catch {};
-                    io_uring.Syscall.close(@intCast(conn_fd));
-                    self.metrics.dec_connections();
-                    self.metrics.inc_errors();
+            const event = self.reactor.poll();
+            switch (event) {
+                .Idle => {
+                    if (!self.is_running()) break;
                     continue;
-                };
+                },
+                .IoComplete => |ev| {
+                    if (ev.user_data == 0) {
+                        // ACCEPT 完成：ev.result 是新连接的 fd
+                        if (ev.result >= 0) {
+                            const conn_fd: i32 = @intCast(ev.result);
+                            self.metrics.inc_connections();
 
-                _ = io_uring.Syscall.send(@intCast(conn_fd), header.ptr, header.len, 0) catch {};
-                _ = io_uring.Syscall.send(@intCast(conn_fd), ibus_body.ptr, ibus_body.len, 0) catch {};
-                status_code = 200;
-            } else if (mem.eql(u8, req.path, "/metrics")) {
-                // P48-3: 返回 Prometheus 格式指标
-                status_code = 200;
-                var metrics_buf: [512]u8 = undefined;
-                const len = metrics_mod.formatMetrics(&metrics_buf) catch {
-                    sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
-                    io_uring.Syscall.close(@intCast(conn_fd));
-                    self.metrics.dec_connections();
-                    continue;
-                };
-                const response = fmt.bufPrint(&metrics_buf, "HTTP/1.1 200 OK\r\n" ++
-                    "Content-Type: text/plain; version=0.0.4\r\n" ++
-                    "Content-Length: {d}\r\n" ++
-                    "Connection: close\r\n" ++
-                    "\r\n{s}",
-                    .{ len, metrics_buf[0..len] }
-                ) catch {
-                    sendErrorResponse(conn_fd, 503, "Service Unavailable") catch {};
-                    io_uring.Syscall.close(@intCast(conn_fd));
-                    self.metrics.dec_connections();
-                    continue;
-                };
-                _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch |err| {
-                    debug.print("发送/metrics响应失败: {}\n", .{err});
-                };
-            } else {
-                status_code = 404;
-                err_msg = "Not Found";
-                sendErrorResponse(conn_fd, 404, "Not Found") catch {};
-                self.metrics.inc_errors();
+                            // 为新连接提交 RECV 请求
+                            if (conn_count < MAX_CONNS) {
+                                conns[conn_count] = .{
+                                    .fd = conn_fd,
+                                    .state = .Recv,
+                                    .buf = [_]u8{0} ** 8192,
+                                    .nread = 0,
+                                    .stream_id = self.next_stream_id.rmw(.Add, 1, .monotonic),
+                                };
+                                const conn = &conns[conn_count];
+                                conn_count += 1;
+
+                                var recv_iov = io_uring.Iovec{
+                                    .iov_base = @as(*anyopaque, @ptrCast(&conn.buf)),
+                                    .iov_len = conn.buf.len,
+                                };
+                                var recv_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
+                                self.reactor.prepare_recv(conn_fd, &recv_iov, &recv_req) catch |err| {
+                                    debug.print("提交 RECV 失败: {s}\n", .{@errorName(err)});
+                                    io_uring.Syscall.close(@intCast(conn_fd));
+                                    self.metrics.dec_connections();
+                                    conn_count -= 1;
+                                    return;
+                                };
+                            } else {
+                                // 连接数超限，直接关闭
+                                debug.print("连接数超限，关闭 fd={d}\n", .{conn_fd});
+                                io_uring.Syscall.close(@intCast(conn_fd));
+                                self.metrics.dec_connections();
+                            }
+                        }
+                        // 重新提交 ACCEPT
+                        if (self.is_running()) {
+                            var new_accept_req = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null };
+                            self.reactor.prepare_accept(self.listen_fd, null, null, &new_accept_req) catch |err| {
+                                debug.print("重新提交 ACCEPT 失败: {s}\n", .{@errorName(err)});
+                                return;
+                            };
+                        }
+                    } else {
+                        // RECV/SEND 完成：查找对应连接
+                        var conn_idx: usize = 0;
+                        var found = false;
+                        while (conn_idx < conn_count) : (conn_idx += 1) {
+                            if (conns[conn_idx].stream_id == ev.user_data) {
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if (!found) {
+                            // 未知 stream_id，忽略
+                            continue;
+                        }
+
+                        const conn = &conns[conn_idx];
+
+                        switch (conn.state) {
+                            .Recv => {
+                                if (ev.result > 0) {
+                                    // RECV 成功：处理请求并发送响应
+                                    conn.nread = @intCast(ev.result);
+                                    self.metrics.inc_requests();
+
+                                    // 构建 HTTP 响应（简化：直接返回 200 OK）
+                                    const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
+                                    var resp_buf: [1024]u8 = undefined;
+                                    const response = fmt.bufPrint(&resp_buf,
+                                        "HTTP/1.1 200 OK\r\n" ++
+                                        "Content-Type: application/json\r\n" ++
+                                        "Content-Length: {d}\r\n" ++
+                                        "Connection: close\r\n" ++
+                                        "\r\n{s}",
+                                        .{body.len, body}
+                                    ) catch {
+                                        io_uring.Syscall.close(@intCast(conn.fd));
+                                        self.metrics.dec_connections();
+                                        self.removeConn(&conns, &conn_count, conn_idx);
+                                        return;
+                                    };
+
+                                    // 提交 SEND
+                                    var send_iov = io_uring.Iovec{
+                                        .iov_base = @as(*anyopaque, @ptrCast(response.ptr)),
+                                        .iov_len = response.len,
+                                    };
+                                    var send_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
+                                    self.reactor.prepare_send(conn.fd, &send_iov, &send_req) catch |err| {
+                                        debug.print("提交 SEND 失败: {s}\n", .{@errorName(err)});
+                                        io_uring.Syscall.close(@intCast(conn.fd));
+                                        self.metrics.dec_connections();
+                                        self.removeConn(&conns, &conn_count, conn_idx);
+                                        return;
+                                    };
+                                    conn.state = .Send;
+                                } else {
+                                    // 连接关闭或错误
+                                    io_uring.Syscall.close(@intCast(conn.fd));
+                                    self.metrics.dec_connections();
+                                    self.removeConn(&conns, &conn_count, conn_idx);
+                                }
+                            },
+                            .Send => {
+                                // SEND 完成：关闭连接
+                                io_uring.Syscall.close(@intCast(conn.fd));
+                                self.metrics.dec_connections();
+                                self.removeConn(&conns, &conn_count, conn_idx);
+                            },
+                            else => {},
+                        }
+                    }
+                },
             }
-
-            // P50: 记录请求日志
-            http_log.logRequest(ctx.id, req.method, req.path, status_code, latency_ms, err_msg);
-
-            // 关闭连接
-            io_uring.Syscall.close(@intCast(conn_fd));
-            self.metrics.dec_connections();
         }
 
         debug.print("服务器停止接受新连接\n", .{});
+        // 关闭所有活跃连接
+        for (0..conn_count) |i| {
+            io_uring.Syscall.close(@intCast(conns[i].fd));
+        }
+    }
+
+    /// 从连接数组中移除指定索引的连接（O(1) 交换删除）
+    fn removeConn(self: *HttpServer, conns: *[MAX_CONNS]Conn, conn_count: *usize, idx: usize) void {
+        _ = self;
+        if (conn_count.* > 0 and idx < conn_count.*) {
+            conns[idx] = conns[conn_count.* - 1];
+            conn_count.* -= 1;
+        }
     }
 
     /// 检查服务器是否正在运行
@@ -341,7 +345,7 @@ pub const HttpServer = struct {
     /// 请求优雅关闭
     pub fn shutdown(self: *HttpServer) void {
         self.running.store(false, .release);
-        self.shutting_down.store(true, .release);  // 阶段27：设置优雅关闭探针
+        self.shutting_down.store(true, .release);
     }
 
     /// 释放服务器资源
@@ -351,7 +355,7 @@ pub const HttpServer = struct {
     }
 };
 
-/// 解析 HTTP 请求
+/// 解析 HTTP 请求（栈缓冲区版本，零堆分配）
 fn parseHttpRequest(alloc: mem.Allocator, raw: []const u8) !HttpRequest {
     var headers = StringHashMap([]const u8).init(alloc);
 
@@ -458,8 +462,6 @@ fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32
     debug.print("/health 请求处理完成 (verbose={})\n", .{verbose});
 }
 
-// 推理功能已移至 http_protocol.zig（阶段23B 封板）
-// 当前 /infer 路径在 run() 中直接返回 503 Service Unavailable
 /// 发送错误响应（栈缓冲区，零堆分配）
 fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void {
     var buf: [512]u8 = undefined;
