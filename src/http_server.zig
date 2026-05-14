@@ -121,6 +121,10 @@ const Conn = struct {
     buf: [8192]u8,
     nread: usize,
     stream_id: u64,
+    recv_iov: io_uring.Iovec,
+    recv_req: io_uring.IoRequest,
+    send_iov: io_uring.Iovec,
+    send_req: io_uring.IoRequest,
 };
 
 /// 最大并发连接数（栈分配，固定大小）
@@ -214,18 +218,18 @@ pub const HttpServer = struct {
                                     .buf = [_]u8{0} ** 8192,
                                     .nread = 0,
                                     .stream_id = self.next_stream_id.rmw(.Add, 1, .monotonic),
+                                    .recv_iov = io_uring.Iovec{
+                                        .iov_base = @as([*]u8, @ptrCast(&conns[conn_count].buf)),
+                                        .iov_len = conns[conn_count].buf.len,
+                                    },
+                                    .recv_req = io_uring.IoRequest{ .stream_id = conns[conn_count].stream_id, .buf_ptr = null },
                                 };
                                 const conn = &conns[conn_count];
                                 conn_count += 1;
 
-                                var recv_iov = io_uring.Iovec{
-                                    .iov_base = @as([*]u8, @ptrCast(&conn.buf)),
-                                    .iov_len = conn.buf.len,
-                                };
-                                var recv_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
-                                self.reactor.prepare_recv(conn_fd, &recv_iov, &recv_req) catch |err| {
-                                    debug.print("提交 RECV 失败: {s}\n", .{@errorName(err)});
-                                    io_uring.Syscall.close(@intCast(conn_fd));
+                                self.reactor.prepare_recv(conn_fd, &conn.recv_iov, &conn.recv_req) catch |err| {
+                                    debug.print("提交 RECV 失败: {s}\\n", .{@errorName(err)});
+                                    io_uring.Syscall.close(@intCast(conn.fd));
                                     self.metrics.dec_connections();
                                     conn_count -= 1;
                                     return;

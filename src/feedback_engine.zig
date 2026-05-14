@@ -66,8 +66,8 @@ pub const SimpleLearner = struct {
 
         // R2: 路由未命中率过高（> 20% of hits）→ 建议扩容路由表
         if (router.route_hit > 0) {
-            const miss_ratio: f32 = @as(f32, @floatFromInt(router.route_miss)) /
-                @as(f32, @floatFromInt(router.route_hit));
+            const total = router.route_hit + router.route_miss;
+            const miss_ratio: f32 = @as(f32, @floatFromInt(router.route_miss)) / @as(f32, @floatFromInt(total));
             if (miss_ratio > ROUTE_MISS_RATIO_THRESHOLD) {
                 return feedback.Suggestion{
                     .layer = .router,

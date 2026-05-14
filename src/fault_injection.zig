@@ -75,7 +75,7 @@ pub fn initRing(injector: *FaultInjector) !io_uring.Ring {
 }
 
 /// 包装 io_uring.Syscall.enter，可注入 SQ 溢出（EAGAIN）
-pub fn submitRing(injector: *FaultInjector, ring_fd: i32, to_submit: u32, min_complete: u32) !u32 {
+pub fn submitRing(injector: *FaultInjector, ring_fd: u32, to_submit: u32, min_complete: u32) !u32 {
     if (injector.enabled and injector.fail_io_uring_sq_full) {
         return error.EAGAIN;
     }
@@ -83,11 +83,11 @@ pub fn submitRing(injector: *FaultInjector, ring_fd: i32, to_submit: u32, min_co
 }
 
 /// 包装 io_uring.Syscall.socket，可注入 socket 创建失败
-pub fn socketFn(injector: *FaultInjector, domain: u32, type: u32, protocol: u32) !i32 {
+pub fn socketFn(injector: *FaultInjector, domain: u32, sock_type: u32, protocol: u32) !i32 {
     if (injector.enabled and injector.fail_socket) {
         return error.EMFILE;
     }
-    return io_uring.Syscall.socket(domain, type, protocol);
+    return io_uring.Syscall.socket(domain, sock_type, protocol);
 }
 
 /// 包装 io_uring.Syscall.bind，可注入 bind 失败
@@ -125,7 +125,7 @@ pub fn checkConnReset(injector: *FaultInjector) void {
 }
 
 test "FaultInjector: 默认情况下不启用故障注入" {
-    const injector = FaultInjector.init();
+    const injector = init();
     debug.assert(!injector.enabled);
     debug.assert(!injector.fail_io_uring_init);
     debug.assert(!injector.fail_io_uring_sq_full);
@@ -139,7 +139,7 @@ test "FaultInjector: 默认情况下不启用故障注入" {
 test "FaultInjector: 启用所有故障注入开关时" {
     // 注意：此测试仅在带有适当 build options 时才有意义
     // 为了演示，我们手动设置字段
-    var injector = FaultInjector{
+    const injector = FaultInjector{
         .enabled = true,
         .fail_io_uring_init = true,
         .fail_io_uring_sq_full = true,

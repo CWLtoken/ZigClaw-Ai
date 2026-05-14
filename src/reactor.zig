@@ -7,7 +7,7 @@ const log = @import("std").log;
 pub const Event = union(enum) {
     IoComplete: struct {
         user_data: u64,
-        result: u32,
+        result: i32,
         buf_ptr: ?*anyopaque,
     },
     Idle,
@@ -228,7 +228,7 @@ pub const Reactor = struct {
         return Event{
             .IoComplete = .{
                 .user_data = req_ptr.stream_id,
-                .result = @as(u32, @bitCast(cqe.res)),
+                .result = cqe.res,
                 .buf_ptr = req_ptr.buf_ptr,
             },
         };
