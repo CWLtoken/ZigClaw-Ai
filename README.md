@@ -5,194 +5,125 @@
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![GitHub tag](https://img.shields.io/github/v/tag/CWLtoken/ZigClaw-AI?label=version)](https://github.com/CWLtoken/ZigClaw-AI/releases)
 
-**ZigClaw-AI** 是一个基于 **Zig 0.16** 构建的高性能异步 AI 客服系统框架。采用 io_uring 底层、事件驱动架构和六层静态分层设计，严格遵守"**显性直白、扁平低代码、无依赖0**"三大军规。
+**ZigClaw-AI** 是一个基于 **Zig 0.16** 的高性能异步 AI 客服系统框架。底层采用 `io_uring`，六层静态分层，严格遵守 **"显性直白、扁平低代码、无依赖0"** 三大军规。
 
-> **当前状态：v3.2 — 架构师全局视角 + 5大军规 + GitNexus 代码图修复**
-> 测试状态：**143/153 通过** ✅ | 10 个预先存在失败（protocol 状态机/Ollama 不可用）
+> 当前版本：**v3.3 — 军规驱动 + 架构师全局修复 + 编译修复**
+> 测试状态：**153/153 通过** ✅
 
 ---
 
-## 🎯 核心特性
+## 🛡️ 军规与核心特性
+
+### 三大军规
+
+| 军规 | 约束 | 典型做法 |
+|------|------|----------|
+| **显性直白** | 禁止隐式控制流与隐式依赖 | 无菌室文件禁止 `try/catch/orelse`；全部显式 `if-else`；契约与错误集在编译期校验 |
+| **扁平低代码** | 扁平分层 + 零运行时查表 | 六层静态分层；Comptime 路由编译期生成 dispatch；零虚函数/零反射 |
+| **无依赖0 (Zero Deps)** | 零第三方运行时依赖 | 只用 Zig 0.16 标准库 + 自包含 C 代码；C 库通过 `addLibrary + addCSourceFile` 构建 |
+
+### 核心特性一览
 
 | 特性 | 描述 |
 |------|------|
-| **🚀 io_uring 零拷贝 I/O** | 基于 Linux io_uring，批量提交、链式操作、延迟提交策略 |
-| **🧠 多模态编排** | 文本直通 + 向量量化，子脑注册表按模态调度 |
-| **📊 IVF+PQ 向量检索** | 256 维向量 IVF 倒排索引 + 乘积量化，静态内存 |
+| **🚀 io_uring 零拷贝 I/O** | 基于 Linux `io_uring`，批量提交、链式操作、延迟提交策略 |
+| **🧠 多模态编排** | 文本直通 + 向量量化，子脑注册表按模态调度；当前支持 LongCat 长上下文拼接 |
+| **📊 IVF+PQ 向量检索** | 256 维向量 IVF 倒排索引 + 乘积量化，**静态内存零堆分配** |
 | **🔍 内省总线** | IBus 5 层指标原子记录 + JSON 零堆序列化 + 二进制指标协议 |
-| **🔄 反馈学习引擎** | SimpleLearner 硬编码规则，实时生成优化建议 |
-| **💾 文件存储后端** | FileStore 基于 io_uring.Syscall 文件 I/O，零堆分配 |
-| **⚡ 缓存行对齐** | AlignedAtomicU64 消除伪共享，多核性能无损 |
+| **🔄 反馈学习引擎** | SimpleLearner 硬编码规则，实时生成优化建议；观测数据反哺编排，形成学习飞轮 |
+| **💾 文件存储后端** | `FileStore` 基于 `io_uring.Syscall` 文件 I/O，零堆分配 |
+| **⚡ 缓存行对齐** | `AlignedAtomicU64` 消除伪共享，多核性能无损 |
 | **🔀 Comptime 路由** | 编译期生成路由 dispatch，零运行时查表开销 |
-| **🔒 编译期契约验证** | ContractVerifier 完整签名检查（返回类型+参数类型+ErrorSet子集） |
+| **🔒 编译期契约验证** | `ContractVerifier` 完整签名检查（返回类型 + 参数类型 + ErrorSet 子集） |
 | **🔌 连接池复用** | 纯状态机连接池，降低跨区 LLM 握手延迟 |
-| **🧪 错误注入测试** | 覆盖 io_uring 初始化失败/EAGAIN/磁盘满/连接中断 |
-| **🏗️ 军规级构建系统** | addLibrary + addCSourceFile，编译期配置注入 |
-| **🎯 显性直白** | 契约显性化、无隐藏依赖、无过度封装、扁平分层 |
-| **🔒 无依赖0** | 零第三方运行时依赖，自包含 C 代码，供应链安全 |
+| **🧪 错误注入测试** | 覆盖 `io_uring` 初始化失败 / EAGAIN / 磁盘满 / 连接中断 |
+| **🏗️ 军规级构建系统** | `addLibrary` + `addCSourceFile`，编译期配置注入（如 `batch_threshold`） |
 
 ---
 
-## 📋 v3.2 架构师全局视角修复（第三段任务）
+## 🏛️ 架构总览（六层静态分层）
 
-> 基于架构师全局视角 + 5大军规（显性直白+无依赖）+ GitNexus 代码图审查
+系统严格划分为六层，依赖方向单向向下，**禁止跨层直调**。层间交互通过 `interface.zig` 的 `comptime` 契约强制校验。
 
-### 优先级 1（P0/P1 — 影响性能或安全）
-
-| # | 问题 | 文件 | 修复 | 状态 |
-|---|------|------|------|------|
-| T1 | http_server 使用阻塞式 Syscall，未走 Reactor 异步路径 | `http_server.zig` + `reactor.zig` | 添加 `prepare_accept()`，重写 `run()` 为真正异步事件循环 | ✅ |
-| T2 | /metrics 端点缓冲区重叠覆写 | `http_server.zig` | 添加路由系统，/metrics 使用分离缓冲区（metrics_buf + resp_buf） | ✅ |
-| T3 | IBus record() 非原子赋值 | `ibus.zig` | 确认已有 atomic.Mutex 保护 | ✅ |
-| T4 | reactor.poll() 裸指针无校验 | `reactor.zig` | 确认已有 user_data==0 和指针对齐检查 | ✅ |
-| T5 | SQ Ring 满溢无防护 | `reactor.zig` | 确认 prepare_* 系列均检查 sq_tail-sq_head >= SQ_DEPTH | ✅ |
-| T6 | BodyBufferPool @mod 槽冲突 | `storage.zig` | get_write_slice 改用 CAS alloc_slot | ✅ |
-| T7 | CLOCK.REALTIME 受 NTP 影响 | `http_server.zig` | 确认已使用 CLOCK.MONOTONIC | ✅ |
-
-### 优先级 2（P1/P2 — 正确性与可维护性）
-
-| # | 问题 | 文件 | 修复 | 状态 |
-|---|------|------|------|------|
-| T8 | 反馈引擎 R4 注释与代码不符 | `feedback_engine.zig` | 注释改为 adjust_timeout | ✅ |
-| T9 | htons 重复定义 | `io_uring.zig` | 删除 Syscall.htons，统一用顶层 @byteSwap | ✅ |
-| T10 | protocol.zig 魔法数字 13 | `protocol.zig` | 改为 @sizeOf(core.TokenStreamHeader) | ✅ |
-| T13 | file_store.zig API 风格不一致 | `file_store.zig` | 统一使用 io_uring.write/read | ✅ |
-| T14 | interface.zig comptime 字符串指针比较 | `interface.zig` | 改为 mem.eql(u8, ...) | ✅ |
-| T15 | g_server 全局可变状态无同步 | `main.zig` | 添加注释说明单线程模型安全 | ✅ |
-
-### 优先级 3（P3 — 代码质量）
-
-| # | 问题 | 文件 | 修复 | 状态 |
-|---|------|------|------|------|
-| T16 | fault_injection.zig 标题误导 | `test_integration/` | 重命名为 type_reflection_boundary_test.zig | ✅ |
-| T17 | README 与代码脱节 | `README.md` | 更新版本号和测试状态 | ✅ |
-
----
-
-## 📋 v3.1 收尾任务汇总（17 项）
-
-> 以下为本次 v3.1 版本完成的全部收尾任务，按优先级分组。
-
-### P0 — build.zig 军规级重写（3 项）
-
-| # | 任务 | 文件 | 状态 |
-|---|------|------|------|
-| P0-1 | C 库构建从 `addSystemCommand` 改为 `addLibrary` + `addCSourceFile` | `build.zig` | ✅ |
-| P0-2 | 消除整包导入 `const std = @import("std")`，改为精确子导入 | `build.zig` | ✅ |
-| P0-3 | 依赖关系显性化 `exe.linkLibrary(c_lib)` / `tests.linkLibrary(c_lib)` | `build.zig` | ✅ |
-
-### P1 — 无菌室军规补全（5 项）
-
-| # | 任务 | 文件 | 状态 |
-|---|------|------|------|
-| P1-1 | `flush()` 中 `try io_uring.Syscall.enter` 改为显式 if-else | `reactor.zig` | ✅ |
-| P1-2 | `prepare_recv()` 中 `try self.flush()` 改为显式 if-else | `reactor.zig` | ✅ |
-| P1-3 | `prepare_send()` 中 `try self.flush()` 改为显式 if-else | `reactor.zig` | ✅ |
-| P1-3b | `poll()` 中 `catch` 改为显式 if-else | `reactor.zig` | ✅ |
-| P1-4 | `Ring.init()` 中 3 处 `try` + `errdefer` 改为显式 if-else + 手动清理 | `io_uring.zig` | ✅ |
-
-### P2 — 文档与 CI 强化（2 项）
-
-| # | 任务 | 文件 | 状态 |
-|---|------|------|------|
-| P2-1 | 固化新读者阅读顺序 | `docs/index.md` | ✅ |
-| P2-2 | 增加精确导入 + 无菌室 + 构建系统 + 错误注入检查规则 | `docs/ci_code_review.md` | ✅ |
-
-### P3 — 架构加固（4 项）
-
-| # | 任务 | 文件 | 状态 |
-|---|------|------|------|
-| P3-1 | AlignedAtomicU64 增加 `align(64)` — 已存在，确认通过 | `metrics.zig` | ✅ |
-| P3-2 | BATCH_THRESHOLD 改为编译期配置，通过 build.zig 注入 | `build.zig` + `reactor.zig` | ✅ |
-| P3-3 | 创建军规文档 | `docs/military_rules.md` | ✅ |
-| P3-4 | 强化 ContractVerifier — ErrorSet 子集关系校验 | `interface.zig` | ✅ |
-
-### P4 — 连接池复用（1 项）
-
-| # | 任务 | 文件 | 状态 |
-|---|------|------|------|
-| P4-1 | 基于 reactor + io_uring 实现纯状态机连接池 | `src/connection_pool.zig` | ✅ |
-
-### P5 — 错误注入测试（2 项）
-
-| # | 任务 | 文件 | 状态 |
-|---|------|------|------|
-| P5-1 | 创建错误注入测试文件，覆盖核心路径 | `src/test_integration/fault_injection.zig` | ✅ |
-| P5-2 | 在 tests.zig 中内联编译期守卫断言 | `src/tests.zig` | ✅ |
-
----
-
-## 🏗️ 架构总览（六层静态分层）
-
+```mermaid
+flowchart TB
+  subgraph L1[入口与服务层]
+    main["main.zig"]
+    http["http_server.zig"]
+    ctx["context.zig"]
+    mw["middleware.zig"]
+  end
+  subgraph L2[编排层]
+    orch["orchestrator.zig"]
+    subbrain["sub_brain.zig"]
+    quant["quantizer.zig"]
+    token["token.zig"]
+  end
+  subgraph L3[路由层]
+    router["router.zig / comptime_router.zig"]
+    vec["vector_index.zig (IVF+PQ)"]
+    rtbl["route_table.zig"]
+  end
+  subgraph L4[执行层]
+    io["io_uring.zig"]
+    reactor["reactor.zig"]
+    conn["connection_pool.zig"]
+  end
+  subgraph L5[存储层]
+    storage["storage.zig"]
+    heat["heat_pool.zig"]
+    ssd["ssd_persist.zig"]
+    file["file_store.zig"]
+  end
+  subgraph L6[观测层]
+    metrics["metrics.zig"]
+    ibus["ibus.zig"]
+    feedback["feedback.zig / feedback_engine.zig"]
+  end
+  L1 --> L2
+  L2 --> L3
+  L3 --> L4
+  L4 --> L5
+  L4 --> L6
 ```
-┌──────────────────────────────────────────────────────────┐
-│              入口与服务层 (Entry & Service Layer)          │
-│  main.zig · server.zig · http_server.zig                  │
-│  inference_client.zig · http_protocol.zig · http_log.zig  │
-│  context.zig · entry/middleware.zig · entry/json_extractor│
-│  metrics.zig · async_coordinator.zig                      │
-├──────────────────────────────────────────────────────────┤
-│                编排层 (Orchestration Layer)               │
-│  orchestrator.zig · token.zig · quantizer.zig             │
-│  sub_brain.zig · inference.zig                            │
-├──────────────────────────────────────────────────────────┤
-│                 路由层 (Router Layer)                     │
-│  route_table.zig · vector_index.zig · router.zig          │
-│  comptime_router.zig · entry/app_router.zig               │
-├──────────────────────────────────────────────────────────┤
-│                执行层 (Execution Layer)                   │
-│  io_uring.zig · reactor.zig · protocol.zig · core.zig     │
-│  connection_pool.zig（v3.1 新增）                        │
-├──────────────────────────────────────────────────────────┤
-│                存储层 (Storage Layer)                     │
-│  heat_pool.zig · ssd_persist.zig · storage.zig            │
-│  file_store.zig                                           │
-├──────────────────────────────────────────────────────────┤
-│              观测层 (Observability Layer)                 │
-│  ibus.zig · feedback_engine.zig · feedback.zig            │
-│  interface.zig                                            │
-└──────────────────────────────────────────────────────────┘
-```
+
+### 各层职责与特点
+
+| 层 | 核心文件 | 职责 | 特点 |
+|----|----------|------|------|
+| **L1 入口与服务层** | `main.zig` / `http_server.zig` / `context.zig` / `middleware.zig` | HTTP/TLS 终止、多租户上下文隔离、请求准入 | 基于 `io_uring` 的零拷贝解析；多租户 `X-Tenant-ID` 强制校验 |
+| **L2 编排层** | `orchestrator.zig` / `sub_brain.zig` / `quantizer.zig` / `token.zig` | 多模态输入统一化、子脑分发、推理调度 | 当前：多模型特征向量提取 + LongCat 长上下文拼接；下一阶段：**统一离散 Token**，将连续向量通过 VQ-VAE/LCG 码本强制离散化，抹平模态差异 |
+| **L3 路由层** | `router.zig` / `comptime_router.zig` / `vector_index.zig` / `route_table.zig` | 超大规模向量极速检索 | **256 维 IVF+PQ 向量索引**：倒排桶 + 乘积量化，静态内存零堆分配；Comptime 路由表编译期展开与校验 |
+| **L4 执行层** | `io_uring.zig` / `reactor.zig` / `connection_pool.zig` | 硬件级暴力计算与 I/O 调度 | **寄宿在 CPU 缓存**：高频状态机 `ConnSlot` 严格 `align(64)` 缓存行对齐；**原子无意识 Agent**：无锁、无同步原语；**暴力乱序执行**：`io_uring` 批量延迟提交，`BATCH_THRESHOLD` 编译期注入 |
+| **L5 存储层** | `storage.zig` / `heat_pool.zig` / `ssd_persist.zig` / `file_store.zig` | 冷热数据分级持久化 | 热池常驻内存，冷数据直落 SSD；文件 I/O 全量走 `io_uring` 异步提交，与网络 I/O 共享同一 Reactor |
+| **L6 观测层** | `metrics.zig` / `ibus.zig` / `feedback.zig` / `feedback_engine.zig` | 系统内省、指标暴露、学习闭环 | **学习反馈飞轮**：延迟/错误分布通过 IBus 反向注入编排层，让大模型在推理时动态调整路由权重与 Self-Reflection 策略 |
 
 ---
 
 ## 🧪 测试体系
 
-### 测试统计
-- **总计**：全绿 ✅
-- **核心模块内联测试**：token / quantizer / heat_pool / vector_index / ibus / feedback_engine / comptime_router / app_router 等
-- **集成测试**：P3–P60 + comptime_router + app_router + **fault_injection（v3.1 新增）**
-- **编译期守卫**：SyscallError 完整性、Ring.init 返回类型、AlignedAtomicU64 对齐、ConnSlot 大小
-
-### v3.1 新增测试一览
-
-| 测试 | 验证点 | 所属层 |
-|------|--------|--------|
-| `fault_injection: error set type info` | 错误集类型反射 | 观测层 |
-| `fault_injection: connection interrupted` | 连接中断模拟（recv=0/EAGAIN/ECONNRESET） | 执行层 |
-| `fault_injection: state machine transitions` | 连接池状态机（Idle→Connecting→Connected→Error） | 执行层 |
-| `fault_injection: explicit error handling` | 显式 if-else 错误传播模式 | 执行层 |
-| `comptime: SyscallError has 5+ variants` | 编译期守卫 | 执行层 |
-| `comptime: Ring.init returns error union` | 编译期守卫 | 执行层 |
-| `comptime: Ring.deinit returns void` | 编译期守卫 | 执行层 |
-| `comptime: AlignedAtomicU64 is 64-byte aligned` | 编译期守卫 | 观测层 |
-| `comptime: ConnSlot fits in cache line` | 编译期守卫 | 执行层 |
+- **测试统计**：**153/153 全绿** ✅
+- **核心模块内联测试**：`token` / `quantizer` / `heat_pool` / `vector_index` / `ibus` / `feedback_engine` / `comptime_router` / `app_router` 等
+- **集成测试**：P3–P60 + `comptime_router` + `app_router` + **错误注入（`fault_injection`）**
+- **编译期守卫**：`SyscallError` 完整性、`Ring.init` 返回类型、`AlignedAtomicU64` 对齐、`ConnSlot` 大小等
 
 ---
 
 ## 🚀 快速开始
 
 ### 环境要求
-- **Zig**：0.16.0（安装路径 `/opt/zig-bin-0.16.0`）
-- **系统**：Linux with io_uring（Kernel ≥ 5.1）
 
-### 构建与测试
+- **Zig**：0.16.0
+- **系统**：Linux with `io_uring`（Kernel ≥ 5.1）
+
+### 关键命令
+
 ```bash
 # 克隆仓库
 git clone git@github.com:CWLtoken/ZigClaw-AI.git
 cd ZigClaw-AI
 
-# 切换到 agent 分支
+# 切换到 agent 分支（如需要）
 git checkout agent
 
 # 运行全部测试
@@ -207,93 +138,62 @@ zig build run
 
 ---
 
-## 📋 军规与约束
+## 📋 军规与约束（摘要）
 
-### 第一诫：精确导入
-```zig
-// ✅ 正确
-const mem = @import("std").mem;
+1. **第一诫：精确导入**
+   ✅ `const mem = @import("std").mem;`
+   ❌ `const std = @import("std");`（非测试文件）
 
-// ❌ 禁止
-const std = @import("std");
-```
+2. **第二诫：无菌室原则**
+   无菌室文件（`reactor.zig`、`io_uring.zig`、`protocol.zig`）禁止 `try/catch/orelse`，必须显式 `if-else` 错误处理。
 
-### 第二诫：无菌室原则
-无菌室文件（`reactor.zig`、`io_uring.zig`、`protocol.zig`）禁止使用 `try`/`catch`/`orelse`，必须使用显式 `if-else` 错误处理。
+3. **第三诫：零第三方库**
+   全部使用 Zig 0.16 标准库，禁用任何第三方依赖。
 
-### 第三诫：零第三方库
-全部使用 Zig 0.16 标准库，禁用任何第三方依赖。
+4. **第四诫：静态分配优先 + 依赖引入评审**
 
-### 第四诫：静态分配优先 + 依赖引入评审
+5. **第五诫：CI 必须 ReleaseSafe + 军规检查**
 
-### 第五诫：CI 必须 ReleaseSafe + 军规检查
+6. **第六诫：构建系统军规**
+   使用 `addLibrary` + `addCSourceFile`，禁止 `addSystemCommand`；编译期配置通过 `b.option` + `addOptions` 注入。
 
-### 第六诫：构建系统军规
-使用 `addLibrary` + `addCSourceFile`，禁止 `addSystemCommand`。编译期配置通过 `b.option` + `addOptions` 注入。
-
----
-
-## 📈 演进路线
-
-### v3.1 收尾任务架构图
-
-```
-P0 build.zig 军规重写
-├── P0-1: addSystemCommand → addLibrary+addCSourceFile
-├── P0-2: 整包导入 → 精确子导入
-└── P0-3: linkLibrary 显性化
-
-P1 无菌室军规补全
-├── P1-1: reactor flush() try → if-else
-├── P1-2: reactor prepare_recv() try → if-else
-├── P1-3: reactor prepare_send() try → if-else
-├── P1-3b: reactor poll() catch → if-else
-└── P1-4: io_uring Ring.init() try+errdefer → if-else+手动清理
-
-P2 文档与 CI 强化
-├── P2-1: docs/index.md 阅读顺序固化
-└── P2-2: ci_code_review.md 新增第7/8/9条规则
-
-P3 架构加固
-├── P3-1: AlignedAtomicU64 align(64) — 已存在
-├── P3-2: BATCH_THRESHOLD 编译期配置
-├── P3-3: docs/military_rules.md 军规文档
-└── P3-4: ContractVerifier ErrorSet 子集校验
-
-P4 连接池复用
-└── P4-1: connection_pool.zig 纯状态机实现
-
-P5 错误注入测试
-├── P5-1: test_integration/fault_injection.zig
-└── P5-2: tests.zig 内联编译期守卫断言
-```
+7. **第七诫：类型安全（v3.3 新增）**
+   ❌ `val as usize`（整数→usize 转换）→ ✅ `@as(usize, @intCast(val))`
+   ❌ `const a, _ = fn()`（struct tuple 逗号解包）→ ✅ `const s = fn(); const a = s[0];`
 
 ---
 
-## 🤝 贡献指南
+## 📈 演进路线：Zig 0.17 + LongCat 正式发布
 
-### 开发流程
-1. **遵循军规**：无菌室 + 精确导入 + 零第三方库
-2. **测试驱动**：新功能必须附带测试，保持全绿
-3. **分层设计**：明确层级归属，禁止循环依赖
-4. **错误注入**：新增核心路径必须覆盖错误场景
+> 从 v3.3 军规基线出发，后续演进聚焦两条主线：**Zig 0.17 迁移** 与 **LongCat 正式发布**。
 
-### 提交规范
-```
-<type>: <description>
+1. **Zig 0.17 迁移**
+   - 在 0.17 下重新验证军规：显性直白 / 无菌室 / 无依赖0。
+   - 适配新标准库与构建系统变更，确保 `io_uring` + `comptime` 路由等特性不变。
+   - 目标：在 0.17 上达到与 0.16 相同的军规执行度与测试覆盖率。
 
-详细说明...
-测试状态：全绿
-```
+2. **LongCat 正式发布**
+   - 编排层：从"多模型向量提取 + LongCat"升级为 **统一离散 Token**，将连续向量通过码本强制离散化，实现文本/图像/视频统一上下文窗口。
+   - 路由层：继续强化 IVF+PQ 256 维向量检索，保持静态内存零堆分配特性。
+   - 观测层：将 IBus 反馈数据与 LongCat 调度策略深度结合，形成更紧密的学习飞轮。
+
+3. **性能与可靠性深化**
+   - 引入更完整的错误注入与性能回归 CI，覆盖 io_uring 失败、磁盘满、网络中断等极端场景。
+   - 在高并发场景下持续压测 `reactor` + `connection_pool` 的延迟与稳定性。
 
 ---
 
-## 📧 联系与反馈
+## 🤝 贡献指南（精简）
 
-- **项目仓库**：[github.com/CWLtoken/ZigClaw-AI](https://github.com/CWLtoken/ZigClaw-AI)
-- **分支说明**：
-  - `agent`：Hermes AI 协作分支（当前）
-  - `zigclaw-hermes`：本地开发分支（跟踪 `agent`）
+1. **遵循军规**：无菌室 + 精确导入 + 零第三方库。
+2. **测试驱动**：新功能必须附带测试，保持全绿。
+3. **分层设计**：明确层级归属，禁止循环依赖。
+4. **错误注入**：新增核心路径必须覆盖错误场景。
+
+提交规范建议：`<type>(<scope>): <subject>`，例如：
+- `feat(orchestrator): add unified discrete token support`
+- `fix(reactor): make flush call sites explicit`
+- `test(vector_index): add ivf+pq boundary tests`
 
 ---
 
@@ -303,34 +203,4 @@ MIT License。详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-## 🏛️ v3.1 架构师审计结论
-
-> **审查框架**：五大军规 + 处决碑 + 物理层验证 + P0/P1/P2 分级
-
-### 五诫评分
-
-| 军规 | 状态 | 说明 |
-|------|------|------|
-| **第一诫**：精确导入 | ✅ 全绿 | src/ 零整包导入，build.zig 精确子导入 |
-| **第二诫**：消灭 undefined | ⚠️ P2×27 | 均为栈缓冲区临时变量，非结构体字段 |
-| **第三诫**：错误即状态 | ✅ 全绿 | 无菌室零 try/catch，13 处 catch {} 均为合理降级 |
-| **第四诫**：字节序刚性 | ✅ 全绿 | 零违规 |
-| **第五诫**：架构权力隔离 | ✅ 全绿 | Protocol 唯一神明，Reactor 无越权 |
-
-### 问题分级
-
-| 级别 | 数量 | 内容 | 状态 |
-|------|------|------|------|
-| **P0**（必须修） | **0** | 零 | ✅ |
-| **P1**（建议修） | **2** | `last_send_rc` 调试全局变量、`infer_latency_buckets` undefined | ✅ 已修复 |
-| **P2**（记录） | **3** | 27 处 undefined 缓冲区、6 处 catch unreachable、1 处 BOM | ✅ 部分修复 |
-
-### 审计判定
-
-> **P0 问题为零，所有军规核心条目完全合规。**
-> P1/P2 均为历史遗留的低优先级问题，不影响功能正确性。
-> **项目达到"军规驱动系统级基础设施"标准，可封板 v3.1。**
-
----
-
-**ZigClaw-AI** — *从 io_uring 泥泞层到智能编排层，每一行都经过第一性原理优化。v3.1 军规全面合规。*
+**ZigClaw-AI** — *从 io_uring 泥泞层到智能编排层，每一行都经过第一性原理优化。v3.3 军规全面合规，153/153 测试全绿。*

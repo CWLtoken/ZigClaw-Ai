@@ -39,9 +39,11 @@ pub const AlignedAtomicU64 = struct {
     }
 };
 
-// P1-2: 编译期尺寸守卫 — AlignedAtomicU64 大小必须是 CACHE_LINE 的倍数
-// 连续分配时防止尾部伪共享（下一个变量侵入本变量的缓存行）
+// P-4/M-1: 编译期对齐与尺寸守卫 — 确保连续数组时每个元素独占 64B 缓存行
 comptime {
+    if (@alignOf(AlignedAtomicU64) < CACHE_LINE) {
+        @compileError("AlignedAtomicU64 alignment must be >= CACHE_LINE (64)");
+    }
     if (@sizeOf(AlignedAtomicU64) % CACHE_LINE != 0) {
         @compileError("AlignedAtomicU64 size must be a multiple of CACHE_LINE (64)");
     }
