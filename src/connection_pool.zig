@@ -136,8 +136,7 @@ pub const ConnectionPool = struct {
         var slot = &self.slots[idx];
 
         // 创建非阻塞 socket
-        const fd = io_uring.Syscall.socket(io_uring.Syscall.AF_INET, io_uring.Syscall.SOCK_STREAM, 0);
-        if (fd < 0) return null;
+        const fd = io_uring.Syscall.socket(io_uring.Syscall.AF_INET, io_uring.Syscall.SOCK_STREAM, 0) catch return null;
 
         // 设置为非阻塞
         // 注意：简化实现，实际应使用 fcntl 设置 O_NONBLOCK

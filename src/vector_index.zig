@@ -149,7 +149,7 @@ pub const VectorIndex = struct {
                 if (self.pq_trained) {
                     var pq_buf: [M]u8 = undefined;
                     self.encode_pq_into(query, &pq_buf);
-                    sim = self.pq_asymmetric_distance(&pq_buf, &self.pq_codes[vec_idx]);
+                    sim = self.pq_asymmetric_distance(query, &self.pq_codes[vec_idx]);
                 } else {
                     sim = cosine_similarity(query, &self.vectors[vec_idx]);
                 }
@@ -397,16 +397,16 @@ pub const VectorIndex = struct {
 
     // ========================================================================
     // PQ 非对称距离计算（ADC）
+    // PQ 非对称距离计算（ADC）
     // 返回：近似余弦相似度（越大越相似）
     // ========================================================================
-
-    fn pq_asymmetric_distance(self: *const VectorIndex, query_code: *const [M]u8, vec_code: *const [M]u8) f32 {
+    fn pq_asymmetric_distance(self: *const VectorIndex, query: *const [DIM]f32, vec_code: *const [M]u8) f32 {
         var dist_sq: f32 = 0;
         for (0..M) |m| {
-            const qc = query_code[m];
+            const offset = m * DSUB;
             const vc = vec_code[m];
             for (0..DSUB) |d| {
-                const diff = self.pq_codebooks[m][qc][d] - self.pq_codebooks[m][vc][d];
+                const diff = query[offset + d] - self.pq_codebooks[m][vc][d];
                 dist_sq += diff * diff;
             }
         }

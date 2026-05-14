@@ -164,7 +164,7 @@ pub const Ring = struct {
         // 偏移量 IORING_OFF_SQES = 0x10000000
         // 必须用 MAP_SHARED（内核共享），不能用 MAP_POPULATE（SQE 会 segfault）
         // 注意：MAP_POPULATE=0x8000，0x20000 实际是 MAP_HUGETLB（会导致大页映射失败）
-        const sqes_raw = std_os.syscall6(
+        const sqes_raw = linux.syscall6(
             .mmap,
             @as(usize, 0), // addr = NULL
             sqes_size,
@@ -224,7 +224,7 @@ pub const IoRequest = struct {
     buf_ptr: ?*anyopaque,
 };
 // === ZC-1-02/04 终极修正：纯 syscall 降维层 ===
-const std_os = @import("std").os.linux;
+const linux = @import("std").os.linux;
 
 // ZC-5-01: Error union 替代 exit(1) — 生产可用性前提
 pub const SyscallError = error{
@@ -255,7 +255,7 @@ pub const SetupParams = extern struct {
 pub const Syscall = struct {
     pub fn setup(entries: u32, params: *SetupParams) SyscallError!u32 {
         // 直接敲击 425 号门牌 (x86_64 io_uring_setup)，绕过标准库封装
-        const rc = std_os.syscall3(
+        const rc = linux.syscall3(
             .io_uring_setup,
             @as(usize, entries),
             @as(usize, @intFromPtr(params)),
@@ -276,7 +276,7 @@ pub const Syscall = struct {
         const prot: usize = 0x1 | 0x2; // PROT_READ | PROT_WRITE (Linux x86_64 UAPI)
         
         // 使用 syscall6 绕过 std.os.mmap，直接映射
-        const ptr = std_os.syscall6(
+        const ptr = linux.syscall6(
             .mmap,
             @as(usize, 0), // addr
             @as(usize, size),
@@ -295,7 +295,7 @@ pub const Syscall = struct {
         const actual_flags: u32 = if (min_complete > 0) flags | 0x01 else flags;
         // ZC-7-01: 必须用 syscall6 传第6个参数(sigmask size)，
         // 否则 r9 寄存器残留值会导致链式提交行为异常
-        const rc = std_os.syscall6(
+        const rc = linux.syscall6(
             .io_uring_enter,
             @as(usize, fd),
             @as(usize, to_submit),
@@ -313,13 +313,13 @@ pub const Syscall = struct {
     }
 
     pub fn close(fd: u32) void {
-        _ = std_os.syscall1(.close, @as(usize, fd));
+        _ = linux.syscall1(.close, @as(usize, fd));
     }
 
     /// 内部函数：取消映射，忽略错误（清理路径无法恢复）
     /// ZC-5-02: 仅供 errdefer 清理链使用
     fn munmap(addr: usize, len: usize) void {
-        _ = std_os.syscall2(.munmap, addr, len);
+        _ = linux.syscall2(.munmap, addr, len);
     }
 
     /// Linux UAPI 常量
@@ -331,7 +331,7 @@ pub const Syscall = struct {
 
     /// openat(dirfd, pathname, flags, mode) — 打开文件，返回 fd
     pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, mode: u32) SyscallError!i32 {
-        const rc = std_os.syscall4(
+        const rc = linux.syscall4(
             .openat,
             @as(usize, @bitCast(@as(i64, dirfd))),
             @intFromPtr(path),
@@ -348,7 +348,7 @@ pub const Syscall = struct {
     /// io_uring_register(fd, opcode, arg, nr_args)
     /// opcode 0 = IORING_REGISTER_BUFFERS（技术债：opcode 命名待修正）
     pub fn register(fd: u32, opcode: u32, arg: usize, nr_args: u32) SyscallError!void {
-        const rc = std_os.syscall4(.io_uring_register, @as(usize, fd), @as(usize, opcode), arg, @as(usize, nr_args));
+        const rc = linux.syscall4(.io_uring_register, @as(usize, fd), @as(usize, opcode), arg, @as(usize, nr_args));
         // io_uring_register 成功返回 0，失败返回负 errno（作为大 usize）
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
             return SyscallError.RegisterFailed;
@@ -361,7 +361,7 @@ pub const Syscall = struct {
 
     /// 注册固定缓冲区池，成功后内核直接通过 buf_index 访问
     pub fn register_buffers(fd: u32, iovecs: [*]const Iovec, nr: u32) SyscallError!void {
-        const rc = std_os.syscall4(
+        const rc = linux.syscall4(
             .io_uring_register,
             @as(usize, fd),
             @as(usize, IORING_REGISTER_BUFFERS),
@@ -376,7 +376,7 @@ pub const Syscall = struct {
 
     /// 注销固定缓冲区池，释放内核锁定
     pub fn unregister_buffers(fd: u32) SyscallError!void {
-        const rc = std_os.syscall4(
+        const rc = linux.syscall4(
             .io_uring_register,
             @as(usize, fd),
             @as(usize, IORING_UNREGISTER_BUFFERS),
@@ -396,7 +396,7 @@ pub const Syscall = struct {
 
     /// socket(domain, type, protocol) -> fd
     pub fn socket(domain: u32, sock_type: u32, protocol: u32) SyscallError!i32 {
-        const rc = std_os.syscall3(.socket, domain, sock_type, protocol);
+        const rc = linux.syscall3(.socket, domain, sock_type, protocol);
         const result: i32 = @bitCast(@as(u32, @truncate(rc)));
         if (result < 0) return SyscallError.OpenFailed;
         return result;
@@ -404,25 +404,25 @@ pub const Syscall = struct {
 
     /// bind(fd, addr, addrlen)
     pub fn bind(fd: i32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
-        const rc = std_os.syscall3(.bind, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
+        const rc = linux.syscall3(.bind, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     }
 
     /// listen(fd, backlog)
     pub fn listen(fd: i32, backlog: u32) SyscallError!void {
-        const rc = std_os.syscall2(.listen, @as(usize, @bitCast(@as(i64, fd))), backlog);
+        const rc = linux.syscall2(.listen, @as(usize, @bitCast(@as(i64, fd))), backlog);
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     }
 
     /// getsockname(fd, addr, addrlen)
     pub fn getsockname(fd: i32, addr: *SockAddrIn, addrlen: *u32) SyscallError!void {
-        const rc = std_os.syscall3(.getsockname, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), @intFromPtr(addrlen));
+        const rc = linux.syscall3(.getsockname, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), @intFromPtr(addrlen));
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     }
 
     /// connect(fd, addr, addrlen) - blocking connect (for test)
     pub fn connect(fd: u32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
-        const rc = std_os.syscall3(.connect, @as(usize, fd), @intFromPtr(addr), addrlen);
+        const rc = linux.syscall3(.connect, @as(usize, fd), @intFromPtr(addr), addrlen);
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
@@ -433,7 +433,7 @@ pub const Syscall = struct {
 
     /// recv(fd, buf, len, flags) - blocking recv (for test verification)
     pub fn recv(fd: u32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = std_os.syscall4(.recvfrom, @as(usize, fd), @intFromPtr(buf), len, @as(usize, flags));
+        const rc = linux.syscall4(.recvfrom, @as(usize, fd), @intFromPtr(buf), len, @as(usize, flags));
         // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
         if (rc > 0x7FFFFFFFFFFFFFFF) {
             return SyscallError.OpenFailed;
@@ -446,7 +446,7 @@ pub const Syscall = struct {
     /// send(fd, buf, len, flags) — 纯 syscall 降维，不经过标准库
     /// 注意：sendto 系统调用需要 6 个参数，最后两个是 dest_addr=NULL, addrlen=0
     pub fn send(fd: u32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = std_os.syscall6(
+        const rc = linux.syscall6(
             .sendto,
             @as(usize, fd),
             @intFromPtr(buf),
@@ -469,7 +469,7 @@ pub const Syscall = struct {
     /// accept(fd, addr, addrlen) - 接受连接，返回新连接的 fd (i32)
     /// 注意：返回 i32，负数表示错误
     pub fn accept(fd: i32, addr: ?*SockAddrIn, addrlen: ?*u32) SyscallError!i32 {
-        const rc = std_os.syscall3(
+        const rc = linux.syscall3(
             .accept,
             @as(usize, @bitCast(@as(i64, fd))),
             if (addr) |a| @intFromPtr(a) else 0,
@@ -491,14 +491,14 @@ pub const SockAddrIn = extern struct {
 
 /// write(fd, buf, len) - 文件写入，返回写入字节数
 pub fn write(fd: i32, buf: [*]const u8, len: usize) SyscallError!usize {
-    const rc = std_os.syscall3(.write, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
+    const rc = linux.syscall3(.write, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
     if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     return rc;
 }
 
 /// read(fd, buf, len) - 文件读取，返回读取字节数
 pub fn read(fd: i32, buf: [*]u8, len: usize) SyscallError!usize {
-    const rc = std_os.syscall3(.read, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
+    const rc = linux.syscall3(.read, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
     if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     return rc;
 }

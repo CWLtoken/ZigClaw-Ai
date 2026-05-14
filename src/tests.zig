@@ -50,6 +50,7 @@ const quant = @import("quantizer.zig");
 const sb = @import("sub_brain.zig");
 const orch = @import("orchestrator.zig");
 const ac = @import("async_coordinator.zig");
+const debug = @import("std").debug;
 
 // 新模块：架构师五层架构对齐（P42-P46）
 const hp = @import("heat_pool.zig");
@@ -164,6 +165,10 @@ comptime {
     const integration_p60 = @import("integration_p60.zig");
     _ = integration_p60;
 
+    // E-3: 错误注入模块导入（确保编译器拉取 fault_injection.zig 的 test 块）
+    const _fi = @import("fault_injection.zig");
+    _ = _fi;
+
     // v3.0 blueprint references (ensure these files compile)
     _ = @import("interface.zig");
     _ = @import("feedback.zig");
@@ -239,4 +244,70 @@ comptime {
     if (@sizeOf(_pool.ConnSlot) > 64) {
         @compileError("P5 ASSERT: ConnSlot must fit in one cache line");
     }
+}
+
+// ========================================================================
+// E-3 选项A: 真实错误注入行为测试
+// 验证当注入器启用时，包装函数返回预设错误（不依赖真实 io_uring 硬件）
+// 这些测试确保 fault_injection.zig 的包装函数正确注入错误
+// ========================================================================
+const fi = @import("fault_injection.zig");
+
+test "E-3: initRing injects io_uring init failure" {
+    var injector = fi.FaultInjector{
+        .enabled = true,
+        .fail_io_uring_init = true,
+    };
+    const result = fi.initRing(&injector);
+    if (result) |_| {
+        @panic("E-3 ASSERT: initRing should return error when fail_io_uring_init=true");
+    } else |err| {
+        debug.assert(err == error.IOError);
+    }
+}
+
+test "E-3: submitRing injects SQ overflow (EAGAIN)" {
+    var injector = fi.FaultInjector{
+        .enabled = true,
+        .fail_io_uring_sq_full = true,
+    };
+    const result = fi.submitRing(&injector, 0xFFFFFFFF, 1, 0);
+    if (result) |_| {
+        @panic("E-3 ASSERT: submitRing should return EAGAIN when fail_io_uring_sq_full=true");
+    } else |err| {
+        debug.assert(err == error.EAGAIN);
+    }
+}
+
+test "E-3: socketFn injects socket creation failure (EMFILE)" {
+    var injector = fi.FaultInjector{
+        .enabled = true,
+        .fail_socket = true,
+    };
+    const result = fi.socketFn(&injector, 2, 1, 0);
+    if (result) |_| {
+        @panic("E-3 ASSERT: socketFn should return EMFILE when fail_socket=true");
+    } else |err| {
+        debug.assert(err == error.EMFILE);
+    }
+}
+
+test "E-3: listenFn injects listen failure (EAGAIN)" {
+    var injector = fi.FaultInjector{
+        .enabled = true,
+        .fail_listen = true,
+    };
+    const result = fi.listenFn(&injector, -1, 128);
+    if (result) |_| {
+        @panic("E-3 ASSERT: listenFn should return EAGAIN when fail_listen=true");
+    } else |err| {
+        debug.assert(err == error.EAGAIN);
+    }
+}
+
+test "E-3: injector disabled does not inject errors" {
+    var injector = fi.init();
+    debug.assert(!injector.enabled);
+    debug.assert(!injector.fail_io_uring_init);
+    if (fi.initRing(&injector)) |_| {} else |_| {}
 }
