@@ -16,36 +16,39 @@ const metrics_mod = @import("metrics.zig");
 const http_log = @import("http_log.zig");
 const ibus = @import("ibus.zig");
 
-// 服务器指标（原子操作保证线程安全）
+// 服务器指标（缓存行对齐原子变量，消除伪共享）
+// 使用 AlignedAtomicU64/AlignedAtomicU32 确保多核/多线程下
+// Reactor 线程频繁 fetch-add total_requests 时，不会与监控线程
+// 读取 error_count 产生 L1 缓存互相驱逐（伪共享）
 pub const ServerMetrics = struct {
-    uptime_start: i64,           // 启动时间戳（毫秒）— 简化版：暂时为0
-    total_requests: atomic.Value(u64),
-    active_connections: atomic.Value(u32),
-    error_count: atomic.Value(u64),
+    uptime_start: i64,
+    total_requests: metrics_mod.AlignedAtomicU64,
+    active_connections: metrics_mod.AlignedAtomicU32,
+    error_count: metrics_mod.AlignedAtomicU64,
 
     pub fn init() ServerMetrics {
         return ServerMetrics{
-            .uptime_start = 0, // 简化：暂时不使用真实时间戳
-            .total_requests = atomic.Value(u64).init(0),
-            .active_connections = atomic.Value(u32).init(0),
-            .error_count = atomic.Value(u64).init(0),
+            .uptime_start = 0,
+            .total_requests = metrics_mod.AlignedAtomicU64.init(0),
+            .active_connections = metrics_mod.AlignedAtomicU32.init(0),
+            .error_count = metrics_mod.AlignedAtomicU64.init(0),
         };
     }
 
     pub fn inc_requests(self: *ServerMetrics) void {
-        _ = self.total_requests.rmw(.Add, 1, .acquire);
+        _ = self.total_requests.fetchAdd(1, .monotonic);
     }
 
     pub fn inc_connections(self: *ServerMetrics) void {
-        _ = self.active_connections.rmw(.Add, 1, .acquire);
+        _ = self.active_connections.fetchAdd(1, .monotonic);
     }
 
     pub fn dec_connections(self: *ServerMetrics) void {
-        _ = self.active_connections.rmw(.Sub, 1, .acquire);
+        _ = self.active_connections.fetchSub(1, .monotonic);
     }
 
     pub fn inc_errors(self: *ServerMetrics) void {
-        _ = self.error_count.rmw(.Add, 1, .acquire);
+        _ = self.error_count.fetchAdd(1, .monotonic);
     }
 
     pub fn get_uptime_ms(self: *const ServerMetrics) i64 {

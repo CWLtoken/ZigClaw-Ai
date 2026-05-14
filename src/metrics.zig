@@ -41,15 +41,66 @@ pub const AlignedAtomicU64 = struct {
 
 // P-4/M-1: 编译期对齐与尺寸守卫 — 确保连续数组时每个元素独占 64B 缓存行
 comptime {
+    // 边界检查：确保 atomic.Value(u64) 尺寸不超过 CACHE_LINE，防止 _pad 数组下溢
+    if (@sizeOf(atomic.Value(u64)) > CACHE_LINE) {
+        @compileError("atomic.Value(u64) size exceeds CACHE_LINE (64), cannot safely pad");
+    }
+    // 结构体对齐验证
     if (@alignOf(AlignedAtomicU64) < CACHE_LINE) {
         @compileError("AlignedAtomicU64 alignment must be >= CACHE_LINE (64)");
     }
+    // 结构体尺寸验证：必须是 CACHE_LINE 的整数倍
     if (@sizeOf(AlignedAtomicU64) % CACHE_LINE != 0) {
         @compileError("AlignedAtomicU64 size must be a multiple of CACHE_LINE (64)");
     }
+    // 数组间距验证：确保连续数组中每个元素独占一个缓存行（终极伪共享防御）
+    if (@sizeOf([2]AlignedAtomicU64) != 2 * CACHE_LINE) {
+        @compileError("AlignedAtomicU64 array stride must be exactly CACHE_LINE (64) bytes");
+    }
 }
 
-// 核心指标（缓存行对齐的原子变量）
+/// 缓存行对齐的原子 u32：强制独占 64 字节缓存行，消除伪共享
+pub const AlignedAtomicU32 = struct {
+    value: atomic.Value(u32) align(CACHE_LINE),
+    _pad: [CACHE_LINE - @sizeOf(atomic.Value(u32))]u8 = undefined,
+
+    pub fn init(v: u32) AlignedAtomicU32 {
+        return .{ .value = atomic.Value(u32).init(v) };
+    }
+
+    pub fn load(self: *const AlignedAtomicU32, comptime order: builtin.AtomicOrder) u32 {
+        return self.value.load(order);
+    }
+
+    pub fn store(self: *AlignedAtomicU32, v: u32, comptime order: builtin.AtomicOrder) void {
+        self.value.store(v, order);
+    }
+
+    pub fn fetchAdd(self: *AlignedAtomicU32, v: u32, comptime order: builtin.AtomicOrder) u32 {
+        return self.value.fetchAdd(v, order);
+    }
+
+    pub fn fetchSub(self: *AlignedAtomicU32, v: u32, comptime order: builtin.AtomicOrder) u32 {
+        return self.value.fetchSub(v, order);
+    }
+
+    pub fn fetchOr(self: *AlignedAtomicU32, v: u32, comptime order: builtin.AtomicOrder) u32 {
+        return self.value.fetchOr(v, order);
+    }
+};
+
+// AlignedAtomicU32 编译期守卫
+comptime {
+    if (@sizeOf(atomic.Value(u32)) > CACHE_LINE) {
+        @compileError("atomic.Value(u32) size exceeds CACHE_LINE (64)");
+    }
+    if (@alignOf(AlignedAtomicU32) < CACHE_LINE) {
+        @compileError("AlignedAtomicU32 alignment must be >= CACHE_LINE (64)");
+    }
+    if (@sizeOf([2]AlignedAtomicU32) != 2 * CACHE_LINE) {
+        @compileError("AlignedAtomicU32 array stride must be exactly CACHE_LINE (64) bytes");
+    }
+}
 pub var http_requests_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
 pub var auth_failures_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);
 pub var infer_total: AlignedAtomicU64 = AlignedAtomicU64.init(0);

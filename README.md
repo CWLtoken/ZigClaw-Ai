@@ -7,7 +7,7 @@
 
 **ZigClaw-AI** 是一个基于 **Zig 0.16** 的高性能异步 AI 客服系统框架。底层采用 `io_uring`，六层静态分层，严格遵守 **"显性直白、扁平低代码、无依赖0"** 三大军规。
 
-> 当前版本：**v3.3 — 军规驱动 + 架构师全局修复 + 编译修复**
+> 当前版本：**v3.4.1 — 军规驱动 + 架构师全局修复 + CI 编译修复 + P1 去 try**
 > 测试状态：**153/153 通过** ✅
 
 ---
@@ -41,62 +41,151 @@
 
 ---
 
-## 🏛️ 架构总览（六层静态分层）
+## 🏛️ 架构总览（六层静态分层 + 契约层）
 
-系统严格划分为六层，依赖方向单向向下，**禁止跨层直调**。层间交互通过 `interface.zig` 的 `comptime` 契约强制校验。
+系统严格划分为六层，依赖方向单向向下，**禁止跨层直调**。层间交互通过 `interface.zig` 和 `feedback.zig` 的 `comptime` 契约强制校验。
 
-```mermaid
-flowchart TB
-  subgraph L1[入口与服务层]
-    main["main.zig"]
-    http["http_server.zig"]
-    ctx["context.zig"]
-    mw["middleware.zig"]
-  end
-  subgraph L2[编排层]
-    orch["orchestrator.zig"]
-    subbrain["sub_brain.zig"]
-    quant["quantizer.zig"]
-    token["token.zig"]
-  end
-  subgraph L3[路由层]
-    router["router.zig / comptime_router.zig"]
-    vec["vector_index.zig (IVF+PQ)"]
-    rtbl["route_table.zig"]
-  end
-  subgraph L4[执行层]
-    io["io_uring.zig"]
-    reactor["reactor.zig"]
-    conn["connection_pool.zig"]
-  end
-  subgraph L5[存储层]
-    storage["storage.zig"]
-    heat["heat_pool.zig"]
-    ssd["ssd_persist.zig"]
-    file["file_store.zig"]
-  end
-  subgraph L6[观测层]
-    metrics["metrics.zig"]
-    ibus["ibus.zig"]
-    feedback["feedback.zig / feedback_engine.zig"]
-  end
-  L1 --> L2
-  L2 --> L3
-  L3 --> L4
-  L4 --> L5
-  L4 --> L6
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  L1: 入口与服务层 (Entry & Service Layer)                           │
+│  ├── main.zig              → 程序入口，初始化各层，启动 HTTP 服务器   │
+│  ├── server.zig            → TCP 脚手架（socket/bind/listen）        │
+│  ├── http_server.zig       → HTTP 服务器（Reactor 异步事件循环）     │
+│  ├── http_protocol.zig     → HTTP 协议处理器（状态机解析）           │
+│  ├── http_log.zig          → 结构化 JSON 请求日志（零堆）            │
+│  ├── async_coordinator.zig → 异步推理协调器（回调模式）              │
+│  ├── context.zig           → 请求上下文（原子 ID/租户/时间戳）       │
+│  ├── metrics.zig           → Prometheus 指标（缓存行对齐原子变量）   │
+│  ├── connection_pool.zig   → 连接池复用（纯状态机）                  │
+│  ├── core.zig              → 核心数据定义（TokenStreamHeader 13B）  │
+│  ├── entry/                                                         │
+│  │   ├── middleware.zig    → Bearer Token 鉴权中间件                │
+│  │   ├── json_extractor.zig→ 零拷贝 JSON 字段提取器                  │
+│  │   └── app_router.zig    → 业务路由配置（文本/图像/音频 handler）  │
+│  └── fault_injection.zig   → 错误注入测试模块（编译期可配置）        │
+├─────────────────────────────────────────────────────────────────────┤
+│  L2: 编排层 (Orchestration Layer)                                    │
+│  ├── orchestrator.zig      → 子脑注册表（≤8个）/ 模态分发 / 量化调度 │
+│  ├── sub_brain.zig         → 子脑接口（Text/Image/Audio/Unknown）    │
+│  ├── quantizer.zig         → LCG 码本量化（256中心，余弦相似度≥0.92）│
+│  ├── token.zig             → Token/TokenSequence（≤512B 编译期守卫） │
+│  ├── inference.zig         → 推理引擎（Ollama 桥接，当前为模拟实现）  │
+│  └── inference_client.zig  → Ollama 客户端存根（WIP，等待 Zig 0.17） │
+├─────────────────────────────────────────────────────────────────────┤
+│  L3: 路由层 (Router Layer)                                           │
+│  ├── router.zig            → 请求路由（op_code → HandlerFn 分发）    │
+│  ├── route_table.zig       → 多策略路由表（精确/前缀/Fallback）      │
+│  ├── comptime_router.zig   → 编译期路由生成（零运行时开销）          │
+│  └── vector_index.zig      → IVF+PQ 向量索引（256维，静态零堆）      │
+├─────────────────────────────────────────────────────────────────────┤
+│  L4: 执行层 (Execution Layer) [无菌室]                               │
+│  ├── io_uring.zig          → io_uring 封装（Ring/SQE/CQE/Syscall）  │
+│  ├── reactor.zig           → Reactor 盲盒层（BATCH=8 延迟提交）      │
+│  └── protocol.zig          → 5 状态机（Idle→HeaderRecv→BodyRecv     │
+│                                →BodyDone→SendDone→WaitRequest）     │
+├─────────────────────────────────────────────────────────────────────┤
+│  L5: 存储层 (Storage Layer)                                          │
+│  ├── storage.zig           → StreamWindow（64槽）+ BodyBufferPool    │
+│  ├── heat_pool.zig         → 热度池（64槽，动态分段指数衰减）        │
+│  ├── ssd_persist.zig       → SSD 持久化（双版本页原子切换）          │
+│  └── file_store.zig        → 文件存储后端（io_uring 异步文件 I/O）   │
+├─────────────────────────────────────────────────────────────────────┤
+│  L6: 观测层 (Observability Layer)                                    │
+│  ├── ibus.zig              → I-Bus 内省总线（5层原子指标+JSON序列化）│
+│  ├── feedback.zig          → 层指标契约（LayerMetrics union）        │
+│  └── feedback_engine.zig   → SimpleLearner 规则引擎（5条硬编码规则） │
+├─────────────────────────────────────────────────────────────────────┤
+│  契约层 (Contract Layer) — 纯类型锚点，零运行时开销                   │
+│  ├── interface.zig         → Executor/Storage/Orchestrator VTable    │
+│  │                          ContractVerifier 编译期签名校验           │
+│  └── feedback.zig          → Layer/Action/Suggestion 类型定义        │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 各层职责与特点
+### L1 — 入口与服务层
 
-| 层 | 核心文件 | 职责 | 特点 |
-|----|----------|------|------|
-| **L1 入口与服务层** | `main.zig` / `http_server.zig` / `context.zig` / `middleware.zig` | HTTP/TLS 终止、多租户上下文隔离、请求准入 | 基于 `io_uring` 的零拷贝解析；多租户 `X-Tenant-ID` 强制校验 |
-| **L2 编排层** | `orchestrator.zig` / `sub_brain.zig` / `quantizer.zig` / `token.zig` | 多模态输入统一化、子脑分发、推理调度 | 当前：多模型特征向量提取 + LongCat 长上下文拼接；下一阶段：**统一离散 Token**，将连续向量通过 VQ-VAE/LCG 码本强制离散化，抹平模态差异 |
-| **L3 路由层** | `router.zig` / `comptime_router.zig` / `vector_index.zig` / `route_table.zig` | 超大规模向量极速检索 | **256 维 IVF+PQ 向量索引**：倒排桶 + 乘积量化，静态内存零堆分配；Comptime 路由表编译期展开与校验 |
-| **L4 执行层** | `io_uring.zig` / `reactor.zig` / `connection_pool.zig` | 硬件级暴力计算与 I/O 调度 | **寄宿在 CPU 缓存**：高频状态机 `ConnSlot` 严格 `align(64)` 缓存行对齐；**原子无意识 Agent**：无锁、无同步原语；**暴力乱序执行**：`io_uring` 批量延迟提交，`BATCH_THRESHOLD` 编译期注入 |
-| **L5 存储层** | `storage.zig` / `heat_pool.zig` / `ssd_persist.zig` / `file_store.zig` | 冷热数据分级持久化 | 热池常驻内存，冷数据直落 SSD；文件 I/O 全量走 `io_uring` 异步提交，与网络 I/O 共享同一 Reactor |
-| **L6 观测层** | `metrics.zig` / `ibus.zig` / `feedback.zig` / `feedback_engine.zig` | 系统内省、指标暴露、学习闭环 | **学习反馈飞轮**：延迟/错误分布通过 IBus 反向注入编排层，让大模型在推理时动态调整路由权重与 Self-Reflection 策略 |
+**职责**：对外暴露 HTTP/TCP 接口，请求准入控制，多租户上下文隔离。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **main.zig** | 程序入口。初始化 ServerMetrics → HttpServer.init() → 启动 Reactor 事件循环。全局服务器指针用于 SIGINT 优雅关闭。默认端口 8080。 |
+| **server.zig** | TCP 网络脚手架。仅依赖 io_uring.Syscall，执行 socket→bind→listen。不导入 Protocol/Reactor/Storage（第四诫隔离）。 |
+| **http_server.zig** | HTTP 服务器核心。基于 Reactor 异步事件循环，支持 Accept→Recv→Send→Close 全链路。Conn 结构体数组（256槽）管理连接状态，每个 Conn 持有独立的 recv_iov/send_iov/req。路由：/health（含 verbose 模式）、/metrics（Prometheus 格式）、/v1/infer（占位）。 |
+| **http_protocol.zig** | HTTP 协议处理器。使用 Reactor 进行 HTTP I/O，实现 RequestLine→Headers→Body 状态机解析。支持 GET/POST，最大 64 个头，零堆分配。 |
+| **http_log.zig** | 结构化 JSON 请求日志。栈缓冲区 512B，手工拼接 JSON，无堆分配。输出到 stdout。 |
+| **async_coordinator.zig** | 异步推理协调器。桥接 HTTP 请求和异步推理结果，回调模式。不导入 reactor/protocol/storage（纯逻辑组件）。 |
+| **context.zig** | 请求上下文。全局原子 ID 生成器（@atomicRmw），包含 tenant_id、timestamp_ms、method、path、auth_token_hash。 |
+| **metrics.zig** | Prometheus 指标收集。AlignedAtomicU64（64字节缓存行对齐，消除伪共享），支持 load/store/rmw 原子操作。编译期 @alignOf/@sizeOf 守卫。 |
+| **connection_pool.zig** | 连接池复用。纯状态机：Idle→Connecting→Connected→Keepalive→Error→Idle。基于 reactor+io_uring，降低跨区 LLM 握手延迟。 |
+| **core.zig** | 核心数据定义。TokenStreamHeader（13字节：stream_id u64 LE + total_len u32 LE + op_code u8）。 |
+| **middleware.zig** | Bearer Token 鉴权。零堆分配，直接比较常量字符串 "secret-token-123"。 |
+| **json_extractor.zig** | 零拷贝 JSON 提取器。在 JSON 缓冲区中定位 "input" 字段位置（返回 start/end/quoted），不复制字符串。 |
+| **app_router.zig** | 业务路由配置。依赖 comptime_router 通用框架，定义 handleText/handleImage/handleAudio 等 handler。 |
+| **fault_injection.zig** | 错误注入测试。编译期可配置（-Dfault_injection=true），模拟 io_uring 初始化失败、EAGAIN、磁盘满、连接中断。 |
+
+### L2 — 编排层
+
+**职责**：多模态输入统一化，子脑分发调度，Token 量化编码，推理执行。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **orchestrator.zig** | 编排器核心。子脑注册表（MAX_BRAINS=8），按模态分发：Text→直通，Image→LCG 64维量化。orchestrate() → TokenSequence → infer_from_tokens()。 |
+| **sub_brain.zig** | 子脑接口。定义 SubBrain struct（name/extract_fn/input_modality/dim）。内置 textExtract（直通返回 TextPassthrough）和 imageExtract（调用 C FFI extract_image_features）。模态：Text/Image/Audio/Unknown。 |
+| **quantizer.zig** | LCG 码本量化器。256个中心，码本初始化：单位向量+角度偏移（前2维 sin/cos）。量化时计算余弦相似度，阈值≥0.92。支持残差存储。 |
+| **token.zig** | Token 系统。Token ≤512B（编译期 @sizeOf 守卫），MAX_TOKEN_DIM=100。TokenType：Text（UTF-8 文本，64B）/ VectorQuantized（向量数据）。TokenSequence：[256]Token。 |
+| **inference.zig** | 推理引擎。优先 Ollama 本地推理（当前为模拟实现，返回 error.OllamaNotAvailable）。OpenAI 路径标记为 WIP。 |
+| **inference_client.zig** | Ollama 客户端存根。WIP 状态，硬编码返回 error.OllamaNotAvailable。等待 Zig 0.17 HTTP Client API 稳定后实现完整 /api/generate 调用。 |
+
+### L3 — 路由层
+
+**职责**：请求路由分发，多策略路由表匹配，向量检索加速。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **router.zig** | 请求路由层。根据报头 op_code 将请求分发给对应 HandlerFn。支持同步 HandlerFn(*RequestContext) 和异步 AsyncHandlerFn（含 cancel_token）。仅依赖 core 和 storage。 |
+| **route_table.zig** | 多策略路由表。MAX_RULES=256，支持三种策略：exact（完全匹配）/ prefix（前缀匹配）/ fallback（兜底，权重最低）。线性扫描 O(n)，零堆分配。 |
+| **comptime_router.zig** | 编译期路由生成。零运行时开销，编译期展开为完美 switch。RouteContext 替代 *anyopaque，编译期类型安全。自动检测重复 op_code（@compileError）。 |
+| **vector_index.zig** | IVF+PQ 混合向量索引。DIM=256，MAX_VECTORS=64，NLIST=4（倒排桶），M=8（PQ子空间），KSUB=16（每子空间中心数）。支持增量 add，自动触发 K-Means 训练（最大10轮）。静态内存零堆分配。 |
+
+### L4 — 执行层（无菌室）
+
+**职责**：io_uring 底层 I/O，事件驱动状态机，协议解析。无菌室文件禁止 try/catch/orelse。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **io_uring.zig** | io_uring 封装。Ring（SQ_DEPTH=1024，编译期 2^n 校验）、SQE/CQE 结构体、Syscall 模块（socket/bind/listen/accept/send/recv/openat/write/read/close/register_buffers/mmap等）。Iovec 16字节编译期守卫。 |
+| **reactor.zig** | Reactor 盲盒层。延迟提交：SQE 累积到 BATCH_THRESHOLD（默认8，编译期可配置）时自动 flush。Event 类型：IoComplete（user_data/result/buf_ptr）/ Idle。prepare_accept/prepare_send/prepare_recv 封装。 |
+| **protocol.zig** | 5 状态机。Idle→HeaderRecv→BodyRecv→BodyDone→SendDone→WaitRequest（Keep-Alive）→Idle。13字节头部 DMA 流 ID 校验。BodyDone 时零拷贝转发到 BodyBufferPool。禁止 try/catch/orelse（第三诫）。 |
+
+### L5 — 存储层
+
+**职责**：请求数据缓冲，热度追踪，冷热数据分级持久化。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **storage.zig** | 物理存储池。StreamWindow（64槽 TokenStreamHeader 数组，push_header/access_header/release_header，swap-with-last 释放）+ BodyBufferPool（1024槽×4096B，write_offsets 追踪写入位置，slot_idx = stream_id % 1024）。 |
+| **heat_pool.zig** | 热度池。64槽 u16 热度值。访问时：heat=100（首次）或 heat+log(heat+1.5)*0.75。衰减时：heat*=(1-(0.00035+0.012/(heat+2.0)))。范围 [0, 65535]。热度高的槽位优先持久化/保留。 |
+| **ssd_persist.zig** | SSD 持久化。flush_heat_pool 序列化热度池到 /tmp/zigclaw_heat.bin（小端字节序），load_heat_pool 反序列化。当前为简化版（单文件覆盖），v3.0 计划实现真·双版本原子切换。 |
+| **file_store.zig** | 文件存储后端。io_uring.Syscall 文件 I/O（openat/write/read/close），零堆分配。文件格式：纯二进制 HeatPool heats 数组字节表示。路径：/tmp/zigclaw_heat_pool.bin。 |
+
+### L6 — 观测层
+
+**职责**：系统内省，指标暴露，反馈学习闭环。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **ibus.zig** | I-Bus 内省总线。5层原子指标（Entry/Orch/Exec/Router/Storage），Mutex 保护全局变量。formatBusStatus() 遍历所有原子变量格式化为 JSON。emit() 日志事件。 |
+| **feedback.zig** | 层指标契约。Layer 枚举（entry/orchestrator/execution/router/storage），LayerMetrics union（每层不同指标结构），Action/Suggestion 类型。纯类型锚点，零运行时开销。 |
+| **feedback_engine.zig** | SimpleLearner 规则引擎。5条硬编码规则：R1 ring_full>10→enable_sq_poll / R2 route_miss>hit*0.2→扩容路由表 / R3 heat_miss>heat_hit→扩容热度池 / R4 syscall_fallback>5→adjust_timeout / R5 error_rate>5%→adjust_timeout。纯函数，无堆，不修改输入。 |
+
+### 契约层
+
+**职责**：编译期接口契约验证，层间类型锚点。
+
+| 组件 | 功能详解 |
+|------|----------|
+| **interface.zig** | 纯类型锚点。ExecutorInterface（Op/Event/VTable）、StorageInterface（get/set VTable）、OrchestratorInterface（orchestrate VTable）。ContractVerifier 编译期验证：checkStorage/checkExecutor/checkOrchestrator，检查完整函数签名（参数类型+返回类型+ErrorSet 子集）。 |
+| **feedback.zig** | 观测层契约。Layer/LayerMetrics/Action/Suggestion 类型定义，为 v3.0 大模型接入提供类型锚点。 |
 
 ---
 
@@ -165,7 +254,7 @@ zig build run
 
 ## 📈 演进路线：Zig 0.17 + LongCat 正式发布
 
-> 从 v3.3 军规基线出发，后续演进聚焦两条主线：**Zig 0.17 迁移** 与 **LongCat 正式发布**。
+> 从 v3.4.1 军规基线出发，后续演进聚焦两条主线：**Zig 0.17 迁移** 与 **LongCat 正式发布**。
 
 1. **Zig 0.17 迁移**
    - 在 0.17 下重新验证军规：显性直白 / 无菌室 / 无依赖0。
@@ -203,4 +292,4 @@ MIT License。详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-**ZigClaw-AI** — *从 io_uring 泥泞层到智能编排层，每一行都经过第一性原理优化。v3.3 军规全面合规，153/153 测试全绿。*
+**ZigClaw-AI** — *从 io_uring 泥泞层到智能编排层，每一行都经过第一性原理优化。v3.4.1 军规全面合规，153/153 测试全绿。*

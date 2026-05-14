@@ -29,9 +29,9 @@ pub const ConnState = enum(u8) {
     Error,
 };
 
-/// 连接槽位
+/// 连接槽位（缓存行对齐，防止数组中相邻槽位共享缓存行导致伪共享）
 pub const ConnSlot = struct {
-    state: ConnState = .Idle,
+    state: ConnState align(64) = .Idle,
     fd: i32 = -1,
     /// 后端地址
     backend_addr: io_uring.SockAddrIn = .{},
@@ -215,13 +215,16 @@ pub const PoolStats = struct {
     total_new_conns: u64,
 };
 
-// ============================================================================
-// 编译期守卫
-// ============================================================================
+// 编译期守卫：双重物理断言防止伪共享
 comptime {
-    // 确保 ConnSlot 大小合理（不超过 64 字节，适配缓存行）
+    // 尺寸守卫：ConnSlot 不能超过一个缓存行
     if (@sizeOf(ConnSlot) > 64) {
         @compileError("ConnectionPool: ConnSlot must fit in one cache line (64 bytes), got " ++
             @typeName(@sizeOf(ConnSlot)) ++ " bytes");
+    }
+    // 对齐守卫：ConnSlot 必须按 64 字节对齐（确保数组中每个元素独占缓存行）
+    if (@alignOf(ConnSlot) != 64) {
+        @compileError("ConnectionPool: ConnSlot must be 64-byte aligned to prevent false sharing in arrays, got align(" ++
+            @typeName(@alignOf(ConnSlot)) ++ ")");
     }
 }
