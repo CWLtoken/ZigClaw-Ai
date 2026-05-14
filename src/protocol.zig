@@ -49,15 +49,27 @@ pub const Protocol = struct {
                         }
                         const opt_header = self.window.access_header(self.active_stream_id);
                         if (opt_header) |header| {
-                            const dma_stream_id = mem.readInt(u64, header.data[0..8], .little);
-                            if (dma_stream_id != self.active_stream_id) {
-                                self.state = .{ .Error = .{ .reason = "dma memory corruption" } };
+                            const remaining_u32 = mem.readInt(u32, header.data[8..12], .little);
+                            const usize_remaining = @as(usize, @intCast(remaining_u32));
+                            const usize_consumed = @as(usize, @intCast(io.result));
+                            if (usize_consumed > usize_remaining) {
+                                self.state = .{ .Error = .{ .reason = "length underflow" } };
                                 return self.state;
                             }
-                            self.state = .BodyRecv;
-                        } else {
-                            self.state = .{ .Error = .{ .reason = "header buffer missing" } };
-                            return self.state;
+                            if (io.buf_ptr) |buf_ptr| {
+                                const src_ptr: [*]u8 = @ptrCast(buf_ptr);
+                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id);
+                                const dest_ptr = write_slice[0];
+                                @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
+                                self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
+                            }
+                            const usize_new_len = usize_remaining - usize_consumed;
+                            mem.writeInt(u32, header.data[8..12], @as(u32, @intCast(usize_new_len)), .little);
+                            if (usize_new_len == 0) {
+                                self.state = .BodyDone;
+                            } else {
+                                self.state = .BodyRecv;
+                            }
                         }
                     },
                 }
@@ -71,33 +83,32 @@ pub const Protocol = struct {
                             self.state = .{ .Error = .{ .reason = "body stream mismatch" } };
                             return self.state;
                         }
-                        const consumed = io.result;
+                        const io_result = io.result;
+                        if (io_result < 0) {
+                            self.state = .{ .Error = .{ .reason = "I/O error" } };
+                            return self.state;
+                        }
                         const opt_header = self.window.access_header(self.active_stream_id);
                         if (opt_header) |header| {
-                            const remaining = mem.readInt(u32, header.data[8..12], .little);
-                            // 【已修复】Zig 0.16 语法：去掉类型参数
-                            const new_len, const overflowed = @subWithOverflow(remaining, consumed);
-                            if (overflowed != 0) {
+                            const remaining_u32 = mem.readInt(u32, header.data[8..12], .little);
+                            const usize_remaining = @as(usize, @intCast(remaining_u32));
+                            const usize_consumed = @as(usize, @intCast(io_result));
+                            if (usize_consumed > usize_remaining) {
                                 self.state = .{ .Error = .{ .reason = "length underflow" } };
                                 return self.state;
                             }
-
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
-                                const dest_ptr, const offset = self.body_pool.get_write_slice(self.active_stream_id);
-                                // 【已修复】告诉编译器：我们故意不用 offset
-                                _ = offset;
-                                @memcpy(dest_ptr[0..consumed], src_ptr[0..consumed]);
-                                self.body_pool.advance(self.active_stream_id, consumed);
+                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id);
+                                const dest_ptr = write_slice[0];
+                                @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
+                                self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
                             }
-
-                            mem.writeInt(u32, header.data[8..12], new_len, .little);
-                            if (new_len == 0) {
+                            const usize_new_len = usize_remaining - usize_consumed;
+                            mem.writeInt(u32, header.data[8..12], @as(u32, @intCast(usize_new_len)), .little);
+                            if (usize_new_len == 0) {
                                 self.state = .BodyDone;
                             }
-                        } else {
-                            self.state = .{ .Error = .{ .reason = "header lost" } };
-                            return self.state;
                         }
                     },
                 }
