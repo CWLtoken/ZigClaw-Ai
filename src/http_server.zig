@@ -142,15 +142,21 @@ pub const HttpServer = struct {
 
     /// 初始化 HTTP 服务器
     pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
-        var ring = try io_uring.Ring.init();
-        errdefer ring.deinit(); // 只在失败时释放
+        var ring = io_uring.Ring.init() catch |err| {
+            debug.print("Ring.init 失败: {s}\n", .{@errorName(err)});
+            return err;
+        };
 
-        const listen_fd = try io_uring.Syscall.socket(
+        const listen_fd = io_uring.Syscall.socket(
             io_uring.AF_INET,
             io_uring.SOCK_STREAM,
             0,
-        );
-        errdefer io_uring.Syscall.close(@intCast(listen_fd));
+        ) catch |err| {
+            debug.print("socket 失败: {s}\n", .{@errorName(err)});
+            ring.deinit();
+            return err;
+        };
+        errdefer ring.deinit();
 
         // 绑定 0.0.0.0:listen_port（listen_port 为 0 时系统自动分配）
         var addr = io_uring.SockAddrIn{
@@ -158,13 +164,25 @@ pub const HttpServer = struct {
             .port = io_uring.htons(listen_port),
             .addr = 0, // 0.0.0.0
         };
-        try io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.SockAddrIn));
-        try io_uring.Syscall.listen(listen_fd, 128);
+        io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.SockAddrIn)) catch |err| {
+            debug.print("bind 失败: {s}\n", .{@errorName(err)});
+            io_uring.Syscall.close(@intCast(listen_fd));
+            return err;
+        };
+        io_uring.Syscall.listen(listen_fd, 128) catch |err| {
+            debug.print("listen 失败: {s}\n", .{@errorName(err)});
+            io_uring.Syscall.close(@intCast(listen_fd));
+            return err;
+        };
 
         // 获取实际端口
         var actual_addr: io_uring.SockAddrIn = undefined;
         var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
-        try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
+        io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len) catch |err| {
+            debug.print("getsockname 失败: {s}\n", .{@errorName(err)});
+            io_uring.Syscall.close(@intCast(listen_fd));
+            return err;
+        };
         const port = io_uring.htons(actual_addr.port);
 
         debug.print("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/\n", .{port});
@@ -223,6 +241,8 @@ pub const HttpServer = struct {
                                         .iov_len = conns[conn_count].buf.len,
                                     },
                                     .recv_req = io_uring.IoRequest{ .stream_id = conns[conn_count].stream_id, .buf_ptr = null },
+                                    .send_iov = io_uring.Iovec{ .iov_base = undefined, .iov_len = 0 },
+                                    .send_req = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null },
                                 };
                                 const conn = &conns[conn_count];
                                 conn_count += 1;
