@@ -75,7 +75,10 @@ pub const BodyBufferPool = struct {
             const bit: u32 = @as(u32, 1) << @intCast(bit_idx);
 
             // CAS 尝试设置位（Zig 0.16 使用 @atomicRmw）
-            while (true) {
+            // SEC-9: 限制 CAS 最大重试次数，防止活锁
+            var cas_retries: u32 = 0;
+            const MAX_CAS_RETRIES: u32 = 16;
+            while (cas_retries < MAX_CAS_RETRIES) : (cas_retries += 1) {
                 const old = @atomicLoad(u32, &self.slot_bitmap_raw[word_idx], .acquire);
                 if (old & bit != 0) break; // 槽已被占用，尝试下一个
                 const prev = @atomicRmw(u32, &self.slot_bitmap_raw[word_idx], .Xchg, old | bit, .acq_rel);

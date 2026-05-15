@@ -187,6 +187,92 @@ pub const Reactor = struct {
         }
     }
 
+    /// 向 SQ 提交一个 WRITE 请求（延迟提交策略）
+    /// 用于 io_uring 异步文件写入（IORING_OP_WRITE）
+    pub fn prepare_write(self: *Reactor, fd: i32, iovec: *const io_uring.Iovec, offset: u64, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
+        const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
+        const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
+        if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+            self.flush() catch |err| {
+                return err;
+            };
+        }
+        const idx = sq_tail & self.ring.sq_ring_mask;
+
+        self.ring.sq_entries[idx] = .{
+            .opcode = @intFromEnum(io_uring.IOOp.Write),
+            .flags = 0,
+            .ioprio = 0,
+            .fd = fd,
+            .off = offset,
+            .addr = @intFromPtr(iovec.iov_base),
+            .len = @as(u32, @intCast(iovec.iov_len)),
+            .__pad1 = 0,
+            .user_data = @intFromPtr(io_req),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .__pad2 = 0,
+        };
+        self.ring.sq_array[idx] = idx;
+        @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
+
+        self.pending_sqe_count += 1;
+        if (self.pending_sqe_count >= BATCH_THRESHOLD) {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
+                return err;
+            }
+        }
+    }
+
+    /// 向 SQ 提交一个 READ 请求（延迟提交策略）
+    /// 用于 io_uring 异步文件读取（IORING_OP_READ）
+    pub fn prepare_read(self: *Reactor, fd: i32, iovec: *const io_uring.Iovec, offset: u64, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
+        const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
+        const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
+        if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+            self.flush() catch |err| {
+                return err;
+            };
+        }
+        const idx = sq_tail & self.ring.sq_ring_mask;
+
+        self.ring.sq_entries[idx] = .{
+            .opcode = @intFromEnum(io_uring.IOOp.Read),
+            .flags = 0,
+            .ioprio = 0,
+            .fd = fd,
+            .off = offset,
+            .addr = @intFromPtr(iovec.iov_base),
+            .len = @as(u32, @intCast(iovec.iov_len)),
+            .__pad1 = 0,
+            .user_data = @intFromPtr(io_req),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .__pad2 = 0,
+        };
+        self.ring.sq_array[idx] = idx;
+        @atomicStore(u32, self.ring.sq_tail, sq_tail + 1, .release);
+
+        self.pending_sqe_count += 1;
+        if (self.pending_sqe_count >= BATCH_THRESHOLD) {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
+                return err;
+            }
+        }
+    }
+
     /// 从 CQ 获取完成事件（自动 flush 挂起的 SQE）
     pub fn poll(self: *Reactor) Event {
         // 进入 poll 前，先 flush 所有挂起的 SQE

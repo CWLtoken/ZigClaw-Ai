@@ -36,7 +36,8 @@ pub fn infer(
     const ollama_result = inference_client.query_ollama(prompt, "llama3") catch |err| {
         // Ollama 未运行或调用失败，返回错误信息（非模拟）
         log.warn("Ollama 调用失败: {}，返回错误响应", .{err});
-        const error_response = try fmt.allocPrint(allocator, "推理服务不可用（Ollama未运行？）：{s}", .{@errorName(err)});
+        // SEC-7: 错误信息不泄露内部状态，返回通用错误信息
+        const error_response = try fmt.allocPrint(allocator, "推理服务不可用，请稍后重试", .{});
         return InferenceResult{
             .text = error_response,
             .len = error_response.len,

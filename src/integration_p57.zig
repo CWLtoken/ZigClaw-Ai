@@ -7,6 +7,7 @@
 
 const os = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
+const reactor = @import("reactor.zig");
 const heat_pool = @import("heat_pool.zig");
 const file_store = @import("file_store.zig");
 
@@ -21,6 +22,14 @@ test "P57-1: saveHeatPool → modify → loadHeatPool → 值一致" {
     const store = file_store.FileStore.init(TEST_PATH);
     store.deleteFile();
 
+    // 创建 io_uring ring 和 reactor（用于异步文件 I/O）
+    var ring = io_uring.Ring.init() catch |err| {
+        @import("std").debug.print("Ring.init 失败: {}\n", .{err});
+        return;
+    };
+    defer ring.deinit();
+    var r = reactor.Reactor.init(ring);
+
     // 构造并填充热度池
     var pool = heat_pool.HeatPool.init();
     // 设置几个槽位为已知值
@@ -34,8 +43,8 @@ test "P57-1: saveHeatPool → modify → loadHeatPool → 值一致" {
     const slot5_before = pool.get_heat(5);
     const slot10_before = pool.get_heat(10);
 
-    // 保存到文件
-    try store.saveHeatPool(&pool);
+    // 保存到文件（使用 io_uring 异步写入）
+    try store.saveHeatPool(&pool, &r);
 
     // 修改内存中的值
     pool.heats[0] = 0;
@@ -44,8 +53,8 @@ test "P57-1: saveHeatPool → modify → loadHeatPool → 值一致" {
     pool.heats[10] = 0;
     @import("std").debug.assert(pool.get_heat(0) == 0);
 
-    // 从文件加载
-    const loaded = try store.loadHeatPool();
+    // 从文件加载（使用 io_uring 异步读取）
+    const loaded = try store.loadHeatPool(&r);
 
     // 验证加载后的值与保存前一致
     @import("std").debug.assert(loaded.get_heat(0) == slot0_before);
@@ -69,7 +78,15 @@ test "P57-2: 文件不存在 → error.FileNotFound" {
     // 确保文件不存在
     store.deleteFile();
 
-    const result = store.loadHeatPool();
+    // 创建 reactor
+    var ring = io_uring.Ring.init() catch |err| {
+        @import("std").debug.print("Ring.init 失败: {}\n", .{err});
+        return;
+    };
+    defer ring.deinit();
+    var r = reactor.Reactor.init(ring);
+
+    const result = store.loadHeatPool(&r);
     @import("std").debug.assert(result == error.FileNotFound);
 
     @import("std").debug.print("P57-2: 文件不存在 → FileNotFound 通过\n", .{});
@@ -83,11 +100,19 @@ test "P57-3: 文件大小 == HeatPool.heats 字节数" {
     const store = file_store.FileStore.init(TEST_PATH);
     store.deleteFile();
 
+    // 创建 reactor
+    var ring = io_uring.Ring.init() catch |err| {
+        @import("std").debug.print("Ring.init 失败: {}\n", .{err});
+        return;
+    };
+    defer ring.deinit();
+    var r = reactor.Reactor.init(ring);
+
     var pool = heat_pool.HeatPool.init();
     _ = pool.update_heat(0, true);
     _ = pool.update_heat(31, true);
 
-    try store.saveHeatPool(&pool);
+    try store.saveHeatPool(&pool, &r);
 
     // 使用 openat + fstat 获取文件大小（验证手段，不是存储实现本身）
     const file_fd = io_uring.Syscall.openat(

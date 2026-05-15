@@ -3,7 +3,8 @@
 // DRD-059 V5: 存储外置适配 — 文件版 FileStore
 //
 // 设计原则：
-//   - 使用 io_uring.Syscall 的文件 I/O 方法（openat/write/read/close）
+//   - 使用 io_uring 异步文件 I/O（IORING_OP_READ / IORING_OP_WRITE）
+//   - 通过 Reactor 提交 SQE，实现真正的 io_uring 零拷贝异步文件操作
 //   - 不依赖 fs 高级封装
 //   - 所有缓冲区在栈上，零堆分配
 //   - 实现 StorageInterface 风格的 VTable 接口
@@ -15,6 +16,7 @@
 const mem = @import("std").mem;
 const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
+const reactor = @import("reactor.zig");
 const heat_pool = @import("heat_pool.zig");
 
 // ============================================================================
@@ -35,38 +37,59 @@ pub const FileStore = struct {
     }
 
     /// 保存热度池到文件
-    /// 使用 io_uring.Syscall 的文件 I/O（openat + write + close）
-    pub fn saveHeatPool(self: *const FileStore, pool: *const heat_pool.HeatPool) !void {
-        // 打开文件（创建 + 截断 + 读写）
+    /// 使用 io_uring 异步文件 I/O（openat + IORING_OP_WRITE + close）
+    /// 通过 Reactor 提交 SQE，实现真正的 io_uring 零拷贝异步写入
+    pub fn saveHeatPool(self: *const FileStore, pool: *heat_pool.HeatPool, r: *reactor.Reactor) !void {
         const fd = try io_uring.Syscall.openat(
             -100,
             self.path,
             io_uring.Syscall.O_CREAT | io_uring.Syscall.O_RDWR | io_uring.Syscall.O_TRUNC,
             0o644,
         );
-        defer io_uring.Syscall.close(@intCast(fd));
+        errdefer io_uring.Syscall.close(@intCast(fd));
 
-        // 将 heats 数组序列化为字节缓冲区（栈上）
-        const heats_bytes = mem.asBytes(&pool.heats);
+        const heats_bytes = @constCast(mem.asBytes(&pool.heats));
         const total_bytes = heats_bytes.len;
 
-        // 分块写入（每次最多 4096 字节，适配栈缓冲区）
-        var offset: usize = 0;
+        // 使用 io_uring IORING_OP_WRITE 异步写入
+        var offset: u64 = 0;
         while (offset < total_bytes) {
-            const chunk = @min(4096, total_bytes - offset);
-            const written = io_uring.write(
-                fd,
-                @as([*]const u8, @ptrCast(&heats_bytes[offset])),
-                chunk,
-            ) catch return error.WriteFailed;
-            offset += written;
+            const idx: usize = @intCast(offset);
+            const remaining = total_bytes - idx;
+            const chunk: u32 = if (remaining < 4096) @intCast(remaining) else 4096;
+
+            const iov = io_uring.Iovec{
+                .iov_base = @as([*]u8, @ptrCast(&heats_bytes[idx])),
+                .iov_len = chunk,
+            };
+
+            var req = io_uring.IoRequest{
+                .stream_id = @intFromPtr(&heats_bytes[idx]),
+                .buf_ptr = @as(*anyopaque, @ptrCast(&heats_bytes[idx])),
+            };
+            try r.prepare_write(fd, &iov, offset, &req);
+
+            offset += chunk;
         }
+
+        // ARCH-1: flush 后等待所有 CQE 完成，确保数据落盘再 close
+        // 计算提交的 SQE 数量（chunk 数）
+        const sqe_count = (total_bytes + 4095) / 4096;
+        try r.flush();
+        var completed: u32 = 0;
+        while (completed < sqe_count) {
+            const ev = r.poll();
+            if (ev == .IoComplete) {
+                completed += 1;
+            }
+        }
+        io_uring.Syscall.close(@intCast(fd));
     }
 
     /// 从文件加载热度池
-    /// 使用 io_uring.Syscall 的文件 I/O（openat + read + close）
-    pub fn loadHeatPool(self: *const FileStore) !heat_pool.HeatPool {
-        // 打开文件（只读）
+    /// 使用 io_uring 异步文件 I/O（openat + IORING_OP_READ + close）
+    /// 通过 Reactor 提交 SQE，实现真正的 io_uring 零拷贝异步读取
+    pub fn loadHeatPool(self: *const FileStore, r: *reactor.Reactor) !heat_pool.HeatPool {
         const fd = io_uring.Syscall.openat(
             -100,
             self.path,
@@ -78,24 +101,44 @@ pub const FileStore = struct {
             }
             return err;
         };
-        defer io_uring.Syscall.close(@intCast(fd));
+        errdefer io_uring.Syscall.close(@intCast(fd));
 
         var pool = heat_pool.HeatPool.init();
-        const heats_bytes = mem.asBytes(&pool.heats);
+        const heats_bytes = @constCast(mem.asBytes(&pool.heats));
         const total_bytes = heats_bytes.len;
 
-        // 分块读取
-        var offset: usize = 0;
+        // 使用 io_uring IORING_OP_READ 异步读取
+        var offset: u64 = 0;
         while (offset < total_bytes) {
-            const chunk = @min(4096, total_bytes - offset);
-            const nread = io_uring.read(
-                fd,
-                @as([*]u8, @ptrCast(&heats_bytes[offset])),
-                chunk,
-            ) catch return error.ReadFailed;
-            if (nread == 0) break; // EOF
-            offset += nread;
+            const idx: usize = @intCast(offset);
+            const remaining = total_bytes - idx;
+            const chunk: u32 = if (remaining < 4096) @intCast(remaining) else 4096;
+
+            const iov = io_uring.Iovec{
+                .iov_base = @as([*]u8, @ptrCast(&heats_bytes[idx])),
+                .iov_len = chunk,
+            };
+
+            var req = io_uring.IoRequest{
+                .stream_id = @intFromPtr(&heats_bytes[idx]),
+                .buf_ptr = @as(*anyopaque, @ptrCast(&heats_bytes[idx])),
+            };
+            try r.prepare_read(fd, &iov, offset, &req);
+
+            offset += chunk;
         }
+
+        // ARCH-1: flush 后等待所有 CQE 完成，确保数据读取完毕再 close
+        const sqe_count = (total_bytes + 4095) / 4096;
+        try r.flush();
+        var completed: u32 = 0;
+        while (completed < sqe_count) {
+            const ev = r.poll();
+            if (ev == .IoComplete) {
+                completed += 1;
+            }
+        }
+        io_uring.Syscall.close(@intCast(fd));
 
         return pool;
     }

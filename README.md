@@ -269,6 +269,13 @@ zig build run
 3. **性能与可靠性深化**
    - 引入更完整的错误注入与性能回归 CI，覆盖 io_uring 失败、磁盘满、网络中断等极端场景。
    - 在高并发场景下持续压测 `reactor` + `connection_pool` 的延迟与稳定性。
+   - **文件 I/O 异步化**：`file_store.zig` 已从同步 `read()`/`write()` 升级为 io_uring `IORING_OP_READ`/`IORING_OP_WRITE` 异步路径，通过 Reactor 提交 SQE，实现真正的零拷贝文件 I/O。
+
+4. **TLS 安全层（等待 Zig 0.17）**
+   - **当前状态**：Zig 0.16 下无法使用 `zig-tls`（官方库要求 Zig 0.17+）。
+   - **计划**：迁移到 Zig 0.17 时同步集成 `zig-tls`（官方维护的零依赖 TLS 实现）。
+   - **替代方案**：生产环境可通过 nginx/haproxy 做 TLS 终止，ZigClaw 处理明文 HTTP。
+   - **目标**：Zig 0.17 迁移完成后，在入口层（L1）集成 `zig-tls`，实现端到端加密，保持"零依赖0"军规。
 
 ---
 

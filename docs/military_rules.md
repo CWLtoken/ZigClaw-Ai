@@ -180,6 +180,20 @@ grep -rn '\<orelse\>' src/reactor.zig src/io_uring.zig src/protocol.zig
 
 ---
 
+## 安全军规（架构师新增，v3.2）
+
+| 编号 | 军规 | 说明 | 修复状态 |
+|------|------|------|----------|
+| **SEC-1** | **禁止硬编码凭证** | 所有凭证（Token、证书路径、密钥）必须从环境变量读取。`middleware.zig` 的 Token 从 `ZIGCLAW_AUTH_TOKEN` 读取，`main.zig` 的端口从 `ZIGCLAW_PORT` 读取。 | ✅ 已修复 |
+| **SEC-2** | **禁止动态拼接命令/路径** | 禁止 `std.process.run` 执行动态拼接命令；禁止直接拼接用户输入构建文件路径。使用预定义命令数组 + 参数白名单。 | ✅ 已修复 |
+| **SEC-3** | **TLS 必须使用 zig-tls 原生实现** | 禁止使用 OpenSSL/LibreSSL 等第三方 TLS 库。等待 Zig 0.17 迁移时集成 `zig-tls`。 | ⏳ 等待 0.17 |
+| **SEC-4** | **必须实现 Rate Limiting** | 入口层必须具备自我保护能力，基于 `AlignedAtomicU64` 实现滑动窗口限流。 | ⏳ 待实现 |
+| **SEC-5** | **必须限制请求体大小** | 显式校验 `Content-Length`，防止溢出攻击。 | ⏳ 待实现 |
+| **SEC-6** | **必须添加安全响应头** | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`X-XSS-Protection: 1; mode=block`。 | ⏳ 待实现 |
+| **SEC-7** | **错误信息不得泄露内部状态** | 客户端返回通用错误信息，详细错误仅记录内部日志。 | ⏳ 待实现 |
+
+---
+
 ## 测试军规
 
 1. **全绿基线**：所有测试必须保持全绿，新功能必须附带测试
