@@ -100,7 +100,7 @@ pub const BodyBufferPool = struct {
         const word_idx = slot / 32;
         const bit_idx = slot % 32;
         const bit: u32 = @as(u32, 1) << @intCast(bit_idx);
-        _ = @atomicRmw(u32, &self.slot_bitmap_raw[word_idx], .Xchg, ~bit, .release);
+        _ = @atomicRmw(u32, &self.slot_bitmap_raw[word_idx], .And, ~bit, .release);
         self.write_offsets[slot] = 0;
     }
 

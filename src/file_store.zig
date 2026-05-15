@@ -207,9 +207,16 @@ fn sqe_read(r: *reactor.Reactor, fd: i32, buf: []u8, offset: u64) !void {
 
 /// 等待指定数量的 CQE 完成
 /// 提交 ≠ 完成：必须显式 poll
+/// 安全限制：最大 poll 次数 = count * 100，防止无限忙等
 fn wait_cqe(r: *reactor.Reactor, count: u32) !void {
     var completed: u32 = 0;
+    var max_polls: u32 = count * 100;
     while (completed < count) {
+        if (max_polls == 0) {
+            log.err("wait_cqe: exceeded max polls ({d})", .{count * 100});
+            return error.IoUringTimeout;
+        }
+        max_polls -= 1;
         const ev = r.poll();
         switch (ev) {
             .IoComplete => |cqe| {
