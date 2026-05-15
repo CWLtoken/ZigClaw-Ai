@@ -1,27 +1,19 @@
 // src/file_store.zig
 // 存储层 | Layer: Storage
-// DRD-059 V5: 存储外置适配 — 文件版 FileStore
+// DRD-059 V6: 存储外置适配 — 文件版 FileStore
 //
-// 设计原则：
-//   - 使用 io_uring 异步文件 I/O（IORING_OP_READ / IORING_OP_WRITE）
-//   - 通过 Reactor 提交 SQE，实现真正的 io_uring 零拷贝异步文件操作
-//   - 不依赖 fs 高级封装
-//   - 所有缓冲区在栈上，零堆分配
-//   - 实现 StorageInterface 风格的 VTable 接口
-//
-// 文件格式：
-//   纯二进制，直接写入 HeatPool 的 heats 数组字节表示
-//   文件路径：/tmp/zigclaw_heat_pool.bin（测试用）
+// 设计原则（显性直白）：
+//   - io_uring 异步文件 I/O
+//   - 提交 ≠ 完成：每次操作显式等待 CQE
+//   - 零堆分配：所有缓冲区在栈上
+//   - 无中间封装：直接操作 SQE/CQE
 
 const mem = @import("std").mem;
 const linux = @import("std").os.linux;
+const log = @import("std").log;
 const io_uring = @import("io_uring.zig");
 const reactor = @import("reactor.zig");
 const heat_pool = @import("heat_pool.zig");
-
-// ============================================================================
-// 文件路径常量
-// ============================================================================
 
 const DEFAULT_PATH: [*:0]const u8 = "/tmp/zigclaw_heat_pool.bin";
 
@@ -37,8 +29,7 @@ pub const FileStore = struct {
     }
 
     /// 保存热度池到文件
-    /// 使用 io_uring 异步文件 I/O（openat + IORING_OP_WRITE + close）
-    /// 通过 Reactor 提交 SQE，实现真正的 io_uring 零拷贝异步写入
+    /// 显式流程：open → 构造 SQE → flush → 等 CQE → close
     pub fn saveHeatPool(self: *const FileStore, pool: *heat_pool.HeatPool, r: *reactor.Reactor) !void {
         const fd = try io_uring.Syscall.openat(
             -100,
@@ -49,46 +40,20 @@ pub const FileStore = struct {
         errdefer io_uring.Syscall.close(@intCast(fd));
 
         const heats_bytes = @constCast(mem.asBytes(&pool.heats));
-        const total_bytes = heats_bytes.len;
 
-        // 使用 io_uring IORING_OP_WRITE 异步写入
-        var offset: u64 = 0;
-        while (offset < total_bytes) {
-            const idx: usize = @intCast(offset);
-            const remaining = total_bytes - idx;
-            const chunk: u32 = if (remaining < 4096) @intCast(remaining) else 4096;
+        // 显性直白：直接提交 write SQE，不通过 prepare_write 中转
+        const sqe_count = try self.submit_write_chunks(r, fd, heats_bytes);
 
-            const iov = io_uring.Iovec{
-                .iov_base = @as([*]u8, @ptrCast(&heats_bytes[idx])),
-                .iov_len = chunk,
-            };
-
-            var req = io_uring.IoRequest{
-                .stream_id = @intFromPtr(&heats_bytes[idx]),
-                .buf_ptr = @as(*anyopaque, @ptrCast(&heats_bytes[idx])),
-            };
-            try r.prepare_write(fd, &iov, offset, &req);
-
-            offset += chunk;
-        }
-
-        // ARCH-1: flush 后等待所有 CQE 完成，确保数据落盘再 close
-        // 计算提交的 SQE 数量（chunk 数）
-        const sqe_count = (total_bytes + 4095) / 4096;
+        // 提交到内核
         try r.flush();
-        var completed: u32 = 0;
-        while (completed < sqe_count) {
-            const ev = r.poll();
-            if (ev == .IoComplete) {
-                completed += 1;
-            }
-        }
+
+        // 显性直白：等待所有 CQE 完成（提交 ≠ 完成）
+        try wait_cqe(r, sqe_count);
+
         io_uring.Syscall.close(@intCast(fd));
     }
 
     /// 从文件加载热度池
-    /// 使用 io_uring 异步文件 I/O（openat + IORING_OP_READ + close）
-    /// 通过 Reactor 提交 SQE，实现真正的 io_uring 零拷贝异步读取
     pub fn loadHeatPool(self: *const FileStore, r: *reactor.Reactor) !heat_pool.HeatPool {
         const fd = io_uring.Syscall.openat(
             -100,
@@ -105,39 +70,11 @@ pub const FileStore = struct {
 
         var pool = heat_pool.HeatPool.init();
         const heats_bytes = @constCast(mem.asBytes(&pool.heats));
-        const total_bytes = heats_bytes.len;
 
-        // 使用 io_uring IORING_OP_READ 异步读取
-        var offset: u64 = 0;
-        while (offset < total_bytes) {
-            const idx: usize = @intCast(offset);
-            const remaining = total_bytes - idx;
-            const chunk: u32 = if (remaining < 4096) @intCast(remaining) else 4096;
-
-            const iov = io_uring.Iovec{
-                .iov_base = @as([*]u8, @ptrCast(&heats_bytes[idx])),
-                .iov_len = chunk,
-            };
-
-            var req = io_uring.IoRequest{
-                .stream_id = @intFromPtr(&heats_bytes[idx]),
-                .buf_ptr = @as(*anyopaque, @ptrCast(&heats_bytes[idx])),
-            };
-            try r.prepare_read(fd, &iov, offset, &req);
-
-            offset += chunk;
-        }
-
-        // ARCH-1: flush 后等待所有 CQE 完成，确保数据读取完毕再 close
-        const sqe_count = (total_bytes + 4095) / 4096;
+        const sqe_count = try self.submit_read_chunks(r, fd, heats_bytes);
         try r.flush();
-        var completed: u32 = 0;
-        while (completed < sqe_count) {
-            const ev = r.poll();
-            if (ev == .IoComplete) {
-                completed += 1;
-            }
-        }
+        try wait_cqe(r, sqe_count);
+
         io_uring.Syscall.close(@intCast(fd));
 
         return pool;
@@ -152,30 +89,137 @@ pub const FileStore = struct {
             0,
         );
     }
+
+    // --------------------------------------------------------------------------
+    // 显性直白：直接操作 SQE
+    // --------------------------------------------------------------------------
+
+    fn submit_write_chunks(self: *const FileStore, r: *reactor.Reactor, fd: i32, data: []const u8) !u32 {
+        _ = self;
+        var offset: u64 = 0;
+        var count: u32 = 0;
+        while (offset < data.len) {
+            const idx: usize = @intCast(offset);
+            const remaining = data.len - idx;
+            const chunk: u32 = if (remaining < 4096) @intCast(remaining) else 4096;
+
+            // 直接写 SQE 到 ring buffer
+            const end: usize = idx + @as(usize, chunk);
+            try sqe_write(r, fd, data[idx..end], offset);
+
+            offset += chunk;
+            count += 1;
+        }
+        return count;
+    }
+
+    fn submit_read_chunks(self: *const FileStore, r: *reactor.Reactor, fd: i32, data: []u8) !u32 {
+        _ = self;
+        var offset: u64 = 0;
+        var count: u32 = 0;
+        while (offset < data.len) {
+            const idx: usize = @intCast(offset);
+            const remaining = data.len - idx;
+            const chunk: u32 = if (remaining < 4096) @intCast(remaining) else 4096;
+
+            const end: usize = idx + @as(usize, chunk);
+            try sqe_read(r, fd, data[idx..end], offset);
+
+            offset += chunk;
+            count += 1;
+        }
+        return count;
+    }
 };
 
 // ============================================================================
-// StorageInterface VTable 风格接口
+// 零封装 SQE 辅助函数
 // ============================================================================
 
-pub const StorageVTable = struct {
-    get: *const fn(self: *const FileStore, key: u64) ?[]const u8,
-    set: *const fn(self: *const FileStore, key: u64, value: []const u8) anyerror!void,
-};
+/// 直接写一个 WRITE SQE 到 ring buffer
+/// 无 IoRequest 中转，user_data 用缓冲区指针本身
+fn sqe_write(r: *reactor.Reactor, fd: i32, buf: []const u8, offset: u64) !void {
+    const sq_tail = @atomicLoad(u32, r.ring.sq_tail, .acquire);
+    const sq_head = @atomicLoad(u32, r.ring.sq_head, .acquire);
+    if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+        try r.flush();
+    }
+    const idx = sq_tail & r.ring.sq_ring_mask;
 
-pub const vtable: StorageVTable = .{
-    .get = _get,
-    .set = _set,
-};
+    r.ring.sq_entries[idx] = .{
+        .opcode = @intFromEnum(io_uring.IOOp.Write),
+        .flags = 0,
+        .ioprio = 0,
+        .fd = fd,
+        .off = offset,
+        .addr = @intFromPtr(buf.ptr),
+        .len = @as(u32, @intCast(buf.len)),
+        .__pad1 = 0,
+        .user_data = @intFromPtr(buf.ptr), // 显性直白：指针即标识
+        .buf_index = 0,
+        .personality = 0,
+        .splice_fd_in = 0,
+        .addr3 = 0,
+        .__pad2 = 0,
+    };
+    r.ring.sq_array[idx] = idx;
+    @atomicStore(u32, r.ring.sq_tail, sq_tail + 1, .release);
 
-fn _get(self: *const FileStore, key: u64) ?[]const u8 {
-    _ = self;
-    _ = key;
-    return null;
+    r.pending_sqe_count += 1;
+    if (r.pending_sqe_count >= 8) { // BATCH_THRESHOLD default
+        try r.flush();
+    }
 }
 
-fn _set(self: *const FileStore, key: u64, value: []const u8) anyerror!void {
-    _ = self;
-    _ = key;
-    _ = value;
+/// 直接写一个 READ SQE 到 ring buffer
+fn sqe_read(r: *reactor.Reactor, fd: i32, buf: []u8, offset: u64) !void {
+    const sq_tail = @atomicLoad(u32, r.ring.sq_tail, .acquire);
+    const sq_head = @atomicLoad(u32, r.ring.sq_head, .acquire);
+    if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
+        try r.flush();
+    }
+    const idx = sq_tail & r.ring.sq_ring_mask;
+
+    r.ring.sq_entries[idx] = .{
+        .opcode = @intFromEnum(io_uring.IOOp.Read),
+        .flags = 0,
+        .ioprio = 0,
+        .fd = fd,
+        .off = offset,
+        .addr = @intFromPtr(buf.ptr),
+        .len = @as(u32, @intCast(buf.len)),
+        .__pad1 = 0,
+        .user_data = @intFromPtr(buf.ptr),
+        .buf_index = 0,
+        .personality = 0,
+        .splice_fd_in = 0,
+        .addr3 = 0,
+        .__pad2 = 0,
+    };
+    r.ring.sq_array[idx] = idx;
+    @atomicStore(u32, r.ring.sq_tail, sq_tail + 1, .release);
+
+    r.pending_sqe_count += 1;
+    if (r.pending_sqe_count >= 8) { // BATCH_THRESHOLD default
+        try r.flush();
+    }
+}
+
+/// 等待指定数量的 CQE 完成
+/// 提交 ≠ 完成：必须显式 poll
+fn wait_cqe(r: *reactor.Reactor, count: u32) !void {
+    var completed: u32 = 0;
+    while (completed < count) {
+        const ev = r.poll();
+        switch (ev) {
+            .IoComplete => |cqe| {
+                if (cqe.result < 0) {
+                    log.err("io_uring CQE error: res={d}", .{cqe.result});
+                    return error.IoUringCqeError;
+                }
+                completed += 1;
+            },
+            .Idle => {}, // 继续等待
+        }
+    }
 }
