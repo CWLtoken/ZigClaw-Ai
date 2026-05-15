@@ -78,39 +78,9 @@ fn getCurrentTimeMs() i64 {
     return @as(i64, @intCast(ts.sec)) * 1000 + @as(i64, @intCast(@divTrunc(ts.nsec, 1_000_000)));
 }
 
-// HTTP 请求结构（栈分配，零堆）
-const HttpRequest = struct {
-    method: []const u8,
-    path: []const u8,
-    query: ?[]const u8,
-    headers: StringHashMap([]const u8),
-    body: []const u8,
-
-    fn deinit(self: *HttpRequest) void {
-        self.headers.deinit();
-    }
-};
-
-// HTTP 响应结构
-const HttpResponse = struct {
-    status_code: u16,
-    status_text: []const u8,
-    headers: StringHashMap([]const u8),
-    body: []const u8,
-
-    fn init() HttpResponse {
-        return HttpResponse{
-            .status_code = 200,
-            .status_text = "OK",
-            .headers = StringHashMap([]const u8).init(heap.page_allocator),
-            .body = "",
-        };
-    }
-
-    fn deinit(self: *HttpResponse) void {
-        self.headers.deinit();
-    }
-};
+// ARCH-2: 删除 HttpRequest/HttpResponse 死代码
+// http_server 使用内联解析，routeAndRespond 直接接收 path/query/body
+// 所有响应通过栈缓冲区构建，零堆分配
 
 // 异步连接状态
 const ConnState = enum {
@@ -568,57 +538,6 @@ pub const HttpServer = struct {
         self.ring.deinit();
     }
 };
-
-/// 解析 HTTP 请求（栈缓冲区版本，零堆分配）
-fn parseHttpRequest(alloc: mem.Allocator, raw: []const u8) !HttpRequest {
-    var headers = StringHashMap([]const u8).init(alloc);
-
-    // 解析请求行
-    const first_line_end = mem.indexOf(u8, raw, "\r\n") orelse return error.InvalidRequest;
-    const first_line = raw[0..first_line_end];
-
-    var iter = mem.splitSequence(u8, first_line, " ");
-    const method = iter.next() orelse return error.InvalidRequest;
-    const full_path = iter.next() orelse return error.InvalidRequest;
-    _ = iter.next(); // 跳过 HTTP/1.1
-
-    // 分离路径和查询参数
-    var path = full_path;
-    var query: ?[]const u8 = null;
-    if (mem.indexOf(u8, full_path, "?")) |pos| {
-        path = full_path[0..pos];
-        query = full_path[pos+1..];
-    }
-
-    // 解析 headers（简化版）
-    var body_start: usize = first_line_end + 2;
-    while (body_start < raw.len) {
-        const line_end = mem.indexOf(u8, raw[body_start..], "\r\n") orelse break;
-        const line = raw[body_start..body_start + line_end];
-        if (line.len == 0) {
-            body_start += 2; // 跳过分隔空行
-            break;
-        }
-
-        if (mem.indexOf(u8, line, ":")) |colon_pos| {
-            const key = mem.trim(u8, line[0..colon_pos], " ");
-            const value = mem.trim(u8, line[colon_pos+1..], " ");
-            try headers.put(key, value);
-        }
-        body_start += line_end + 2;
-    }
-
-    // 提取 body
-    const body = if (body_start < raw.len) raw[body_start..] else "";
-
-    return HttpRequest{
-        .method = method,
-        .path = path,
-        .query = query,
-        .headers = headers,
-        .body = body,
-    };
-}
 
 /// 处理 /health 健康检查（支持 ?verbose=true）
 fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32, query: ?[]const u8) !void {

@@ -44,10 +44,12 @@ pub fn infer(
         };
     };
 
-    // ollama_result 需要释放（query_ollama 使用 page_allocator）
-    // 复制到传入的 allocator
+    // ARCH-2: query_ollama 当前返回错误（空壳实现），不会分配内存
+    // 未来实现时改为接受 allocator 参数，避免 page_allocator
     const result_text = try allocator.dupe(u8, ollama_result);
-    heap.page_allocator.free(ollama_result);
+    // 注意：当前 ollama_result 是错误路径，不会执行到这里
+    // 未来 query_ollama 实现后，此处应使用传入的 allocator 释放
+    _ = heap.page_allocator;
 
     return InferenceResult{
         .text = result_text,

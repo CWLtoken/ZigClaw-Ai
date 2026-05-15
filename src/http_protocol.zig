@@ -195,8 +195,10 @@ pub const HttpProtocolHandler = struct {
         
         // 调用编排器进行推理（简化版，实际应调用 orchestrator.infer()）
         // 注意：这里避免导入 orchestrator，使用简化实现
-        const response_body = fmt.allocPrint(
-            heap.page_allocator,
+        // ARCH-2: 使用栈缓冲区替代 page_allocator，零堆分配
+        var response_buf: [1024]u8 = undefined;
+        const response_body = fmt.bufPrint(
+            &response_buf,
             "{{\"input\":\"{s}\",\"modality\":\"{s}\",\"result\":\"推理结果（暂未集成Orchestrator）\"}}",
             .{ input.?, modality }
         ) catch {
