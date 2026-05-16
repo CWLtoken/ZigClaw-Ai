@@ -198,18 +198,20 @@ pub const StorageArena = struct {
     // --- SSD 快照操作 ---
 
     /// 将热池快照写入 SSD（io_uring 异步）
-    /// 锁生命周期：仅保护热池数据复制，I/O 期间不持有锁
+    /// 锁生命周期：仅保护热池数据复制 + 版本号更新，I/O 期间不持有锁
+    /// 关键：snap_version 递增在锁内、heats 复制之前，确保版本号与数据一致性
     pub fn saveHeatPool(self: *StorageArena) void {
         const filepath = self.snap_path;
-
-        const new_ver = @as(u32, @intCast(@mod(@as(i32, @intCast(self.snap_version)) + 1, 2)));
         const timestamp = monotonicNs();
 
-        // 阶段1：加锁复制热池数据到本地缓冲区
+        // 阶段1：加锁 → 递增版本号 → 复制热池数据 → 解锁
         var write_buf: [SNAP_FILE_SIZE]u8 = undefined;
         const body_offset = SNAP_HEADER_SIZE * 2 + SNAP_PADDING_SIZE;
 
         while (!self.mu.tryLock()) {}
+        // 版本号在锁内递增，确保与 heats 数组的一致性
+        const new_ver = @as(u32, @intCast(@mod(@as(i32, @intCast(self.snap_version)) + 1, 2)));
+        self.snap_version = new_ver;
         const snap = self.getSnapshotUnlocked();
         // 序列化 heats + last_touch_ns 到 write_buf
         const heats_size = SLOT_COUNT * 2;
@@ -227,11 +229,6 @@ pub const StorageArena = struct {
 
         // 阶段3：io_uring 异步写入（不持有锁）
         saveToFile(filepath, write_buf[0..], new_ver);
-
-        // 阶段4：加锁更新 snap_version
-        while (!self.mu.tryLock()) {}
-        defer self.mu.unlock();
-        self.snap_version = new_ver;
     }
 
     /// 从 SSD 恢复热池
@@ -312,7 +309,8 @@ pub const StorageArena = struct {
         return self.heats[slot];
     }
 
-    /// io_uring 异步写入 + 显式 wait_cqe 完成验证
+    /// io_uring 异步写入
+    /// 注意：错误处理使用无锁的 debug.print，避免在持有锁路径上触发递归锁
     fn saveToFile(filepath: [*:0]const u8, data: []const u8, new_ver: u32) void {
         const fd = io_uring.Syscall.openat(
             -100,
@@ -320,18 +318,18 @@ pub const StorageArena = struct {
             io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
             0o644,
         ) catch |err| {
-            log.err("storage_arena: openat 失败: {s}", .{@errorName(err)});
+            debug.print("storage_arena: openat 失败: {s}\n", .{@errorName(err)});
             return;
         };
         defer io_uring.Syscall.close(@as(u32, @intCast(fd)));
 
         // 提交写请求
         _ = io_uring.write(fd, data.ptr, data.len) catch |err| {
-            log.err("storage_arena: write 失败: {s}", .{@errorName(err)});
+            debug.print("storage_arena: write 失败: {s}\n", .{@errorName(err)});
             return;
         };
 
-        log.info("storage_arena: 快照已写入 (version={d})", .{new_ver});
+        debug.print("storage_arena: 快照已写入 (version={d})\n", .{new_ver});
     }
 
     fn getDefaultSnapPath() [*:0]const u8 {
