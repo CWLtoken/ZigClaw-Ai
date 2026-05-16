@@ -9,8 +9,7 @@ const fmt = std.fmt;
 const linux = std.os.linux;
 const io_uring = @import("io_uring.zig");
 const http_server = @import("http_server.zig");
-const heat_pool = @import("heat_pool.zig");
-const heat_snap = @import("heat_snap.zig");
+const storage_arena = @import("storage_arena.zig");
 
 // ============================================================================
 // 全局状态
@@ -19,11 +18,8 @@ const heat_snap = @import("heat_snap.zig");
 /// 全局服务器指针
 var g_server: ?*http_server.HttpServer = null;
 
-/// 热度池（全局单例）
-pub var g_heat_pool: heat_pool.HeatPool = undefined;
-
-/// 快照版本号（0/1 交替）
-pub var g_snap_version: u32 = 0;
+/// 存储层（全局单例）— 统一热池 + SSD 快照 + 文件存储
+pub var g_storage: storage_arena.StorageArena = undefined;
 
 // ============================================================================
 // 端口配置
@@ -72,10 +68,9 @@ fn readEnviron() []const u8 {
 
 /// 初始化存储层：尝试从 SSD 恢复热度池
 fn initStorage() void {
-    g_heat_pool = heat_pool.HeatPool.init();
-    g_snap_version = 0;
+    g_storage = storage_arena.StorageArena.init();
 
-    heat_snap.loadHeatPool(&g_heat_pool) catch |err| {
+    g_storage.loadHeatPool() catch |err| {
         log.info("无快照或快照损坏，初始化全新热度池: {s}", .{@errorName(err)});
         return;
     };
@@ -84,8 +79,8 @@ fn initStorage() void {
 
 /// 保存快照（退出时调用）
 fn saveStorage() void {
-    heat_snap.saveHeatPool(&g_heat_pool, &g_snap_version);
-    log.info("热度池快照已保存 (version={d})", .{g_snap_version});
+    g_storage.saveHeatPool();
+    log.info("热度池快照已保存 (version={d})", .{g_storage.snap_version});
 }
 
 // ============================================================================

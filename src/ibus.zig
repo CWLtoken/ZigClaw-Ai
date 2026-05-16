@@ -19,7 +19,7 @@ const mem = @import("std").mem;
 const atomic = @import("std").atomic;
 const constants = @import("constants.zig");
 const main = @import("main.zig");
-const heat_pool = @import("heat_pool.zig");
+const storage_arena = @import("storage_arena.zig");
 
 
 
@@ -286,12 +286,13 @@ pub fn formatBusStatus(buf: []u8) usize {
     pos += printU32(w[pos..], @intCast(constants.SLOT_COUNT));
     append(w, &pos, ",\n");
     append(w, &pos, "    \"snap_version\": ");
-    pos += printU32(w[pos..], main.g_snap_version);
+    pos += printU32(w[pos..], main.g_storage.snap_version);
     append(w, &pos, ",\n");
-    // total_heat 和 active_slots 需要遍历 heat_pool.heats
+    // total_heat 和 active_slots — 加锁读取快照
+    const snap = main.g_storage.getSnapshot();
     var total_heat: u64 = 0;
     var active_slots: u32 = 0;
-    for (main.g_heat_pool.heats) |h| {
+    for (snap.heats) |h| {
         total_heat += h;
         if (h > 0) active_slots += 1;
     }
@@ -437,11 +438,12 @@ pub fn formatBinaryMetrics(buf: []u8) usize {
     pos += writeU64Frame(buf[pos..], .storage_vector_search, storage.vector_search_count);
     pos += writeU64Frame(buf[pos..], .storage_arena_bytes, storage.arena_bytes_allocated);
     pos += writeU32Frame(buf[pos..], .storage_slot_count, @intCast(constants.SLOT_COUNT));
-    pos += writeU32Frame(buf[pos..], .storage_snap_version, main.g_snap_version);
-    // total_heat 和 active_slots 需要遍历 heat_pool.heats
+    pos += writeU32Frame(buf[pos..], .storage_snap_version, main.g_storage.snap_version);
+    // total_heat 和 active_slots — 加锁读取快照
+    const snap = main.g_storage.getSnapshot();
     var total_heat: u64 = 0;
     var active_slots: u32 = 0;
-    for (main.g_heat_pool.heats) |h| {
+    for (snap.heats) |h| {
         total_heat += h;
         if (h > 0) active_slots += 1;
     }

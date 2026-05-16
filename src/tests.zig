@@ -53,8 +53,7 @@ const ac = @import("async_coordinator.zig");
 const debug = @import("std").debug;
 
 // 新模块：架构师五层架构对齐（P42-P46）
-const hp = @import("heat_pool.zig");
-const hs = @import("heat_snap.zig");
+const sa = @import("storage_arena.zig");
 const vi = @import("vector_index.zig");
 const rt = @import("route_table.zig");
 const ib = @import("ibus.zig");
@@ -117,8 +116,7 @@ comptime {
     _ = orch;
     _ = ac; // async_coordinator 测试
     // 新模块测试（P42-P46）
-    _ = hp;
-    _ = hs;
+    _ = sa;
     _ = vi;
     _ = rt;
     _ = ib;
@@ -174,7 +172,7 @@ comptime {
     _ = @import("feedback.zig");
     // DRD-059: V4/V5 新模块
     _ = @import("feedback_engine.zig");
-    _ = @import("file_store.zig");
+    _ = @import("storage_arena.zig");
     // P2-3: Comptime 路由（独立模块，验证后替换）
     _ = @import("comptime_router.zig");
     _ = @import("entry/app_router.zig");

@@ -9,22 +9,21 @@
 // 验证 file_store 的 vtable.get/vtable.set 可调用且不崩溃
 // ============================================================================
 
-test "P58-1: FileStore HeatPool 持久化链路" {
-    const fs = @import("file_store.zig");
-    const hp = @import("heat_pool.zig");
+test "P58-1: StorageArena 持久化链路" {
+    const sa = @import("storage_arena.zig");
 
-    const store = fs.FileStore.init("/tmp/zigclaw_contract_test.bin");
+    var arena = sa.StorageArena.init();
+    arena.snap_path = "/tmp/zigclaw_contract_test.bin";
 
     // 创建测试热度池
-    var pool = hp.HeatPool.init();
-    _ = pool.update_heat(0, true);
-    _ = pool.update_heat(1, true);
-    @import("std").debug.assert(pool.get_heat(0) > 0);
+    _ = arena.update_heat(0, true);
+    _ = arena.update_heat(1, true);
+    @import("std").debug.assert(arena.get_heat(0) > 0);
 
     // 清理
-    store.deleteFile();
+    arena.deleteFile();
 
-    @import("std").debug.print("P58-1: FileStore HeatPool 持久化链路 通过\n", .{});
+    @import("std").debug.print("P58-1: StorageArena 持久化链路 通过\n", .{});
 }
 
 // ============================================================================
