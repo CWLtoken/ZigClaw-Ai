@@ -1,15 +1,15 @@
 // src/http_server.zig
 // ZigClaw V2.4 | 阶段23C | 故障恢复与可观测性
 // 架构升级：run() 改为基于 Reactor 的异步事件循环
-const std = @import("std");
-const atomic = std.atomic;
-const debug = std.debug;
-const fmt = std.fmt;
-const heap = std.heap;
-const log = std.log;
-const mem = std.mem;
-const StringHashMap = std.StringHashMap;
-const linux = std.os.linux;
+
+const atomic = @import("std").atomic;
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
+const heap = @import("std").heap;
+const log = @import("std").log;
+const mem = @import("std").mem;
+const StringHashMap = @import("std").StringHashMap;
+const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
 const reactor = @import("reactor.zig");
 const context = @import("context.zig");
@@ -130,7 +130,9 @@ const RateLimiter = struct {
     }
 
     pub fn allow(self: *RateLimiter) bool {
-        const now = @as(u64, @intCast(std.time.milliTimestamp()));
+        var ts: linux.timespec = undefined;
+        _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
+        const now = @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(ts.nsec)) / 1_000_000;
         const start = self.window_start.load(.acquire);
         if (now - start >= WINDOW_NS / 1000) {
             // 新窗口，重置计数

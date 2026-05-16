@@ -2,9 +2,8 @@
 // ZigClaw V2.4 Phase12 | 压力测试 | StreamWindow 64槽位填满
 const constants = @import("constants.zig");
 const router = @import("router.zig");
-const std = @import("std");
-const testing = std.testing;
-const mem = std.mem;
+const testing = @import("std").testing;
+const mem = @import("std").mem;
 const core = @import("core.zig");
 const storage = @import("storage.zig");
 

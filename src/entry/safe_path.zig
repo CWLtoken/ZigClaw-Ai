@@ -1,9 +1,8 @@
 // safe_path.zig
 // SEC-8: 路径遍历防护
 // 确保文件路径不超出允许的根目录范围
-const std = @import("std");
-const mem = std.mem;
-const log = std.log;
+const mem = @import("std").mem;
+const log = @import("std").log;
 
 /// 路径遍历检测结果
 pub const PathCheckResult = enum {

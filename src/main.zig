@@ -1,12 +1,11 @@
 // src/main.zig
 // ZigClaw HTTP 服务器启动器 - 阶段28: 军规构建
 // 存储层集成：HeatPool 初始化 + SSD 快照恢复 + 优雅退出保存
-const std = @import("std");
-const debug = std.debug;
-const log = std.log;
-const mem = std.mem;
-const fmt = std.fmt;
-const linux = std.os.linux;
+const debug = @import("std").debug;
+const log = @import("std").log;
+const mem = @import("std").mem;
+const fmt = @import("std").fmt;
+const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
 const http_server = @import("http_server.zig");
 const storage_arena = @import("storage_arena.zig");

@@ -2,10 +2,9 @@
 // 入口层 | Layer: Entry
 // Bearer Token 鉴权中间件 — 零堆分配，直接比较常量字符串
 
-const std = @import("std");
-const debug = std.debug;
-const fmt = std.fmt;
-const mem = std.mem;
+const debug = @import("std").debug;
+const fmt = @import("std").fmt;
+const mem = @import("std").mem;
 const io_uring = @import("../io_uring.zig");
 
 /// 从环境变量读取鉴权 Token（零依赖，零硬编码）
