@@ -20,10 +20,10 @@ const heat_snap = @import("heat_snap.zig");
 var g_server: ?*http_server.HttpServer = null;
 
 /// 热度池（全局单例）
-var g_heat_pool: heat_pool.HeatPool = undefined;
+pub var g_heat_pool: heat_pool.HeatPool = undefined;
 
 /// 快照版本号（0/1 交替）
-var g_snap_version: u32 = 0;
+pub var g_snap_version: u32 = 0;
 
 // ============================================================================
 // 端口配置
