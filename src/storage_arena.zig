@@ -5,7 +5,7 @@
 // 设计原则（显性直白）：
 //   - 一个结构体，一个 ArenaAllocator，一个 init/deinit
 //   - 禁止模块间手动 deinit 调用链
-//   - 零堆分配（write_buf 在栈上）
+//   - 热池数据缓存行对齐（align(64)），消除伪共享
 //   - io_uring 异步写入 + 显式 wait_cqe 完成验证
 //
 // 军规遵循：
@@ -15,7 +15,6 @@
 
 const mem = @import("std").mem;
 const linux = @import("std").os.linux;
-const log = @import("std").log;
 const debug = @import("std").debug;
 const atomic = @import("std").atomic;
 const io_uring = @import("io_uring.zig");
@@ -103,11 +102,12 @@ pub const StorageArena = struct {
     allocator: @import("std").mem.Allocator,
 
     // --- 热池核心数据 ---
-    heats: [SLOT_COUNT]u16,
-    last_touch_ns: [SLOT_COUNT]u64,
+    // M-1: heats 和 last_touch_ns 各自缓存行对齐，消除多核伪共享
+    heats: [SLOT_COUNT]u16 align(64),
+    last_touch_ns: [SLOT_COUNT]u64 align(64),
 
-    // --- 并发安全锁 ---
-    mu: atomic.Mutex = .unlocked,
+    // --- 并发安全锁（独立缓存行，避免与热池数据伪共享）---
+    mu: atomic.Mutex align(64) = .unlocked,
 
     // --- SSD 快照状态 ---
     snap_version: u32,
@@ -225,7 +225,7 @@ pub const StorageArena = struct {
 
         while (!self.mu.tryLock()) {}
         // 版本号在锁内递增，确保与 heats 数组的一致性
-        const new_ver = @as(u32, @intCast(@mod(@as(i32, @intCast(self.snap_version)) + 1, 2)));
+        const new_ver = self.snap_version ^ 1; // 0↔1 翻转
         self.snap_version = new_ver;
         const snap = self.getSnapshotUnlocked();
         // 序列化 heats + last_touch_ns 到 write_buf
