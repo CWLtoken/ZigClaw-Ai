@@ -2,9 +2,10 @@
 // 存储层 | Layer: Storage
 // 热度池，基于动态分段指数衰减公式
 
-// 精确导入：mem + linux（clock_gettime）
+// 精确导入：mem + linux（clock_gettime）+ 共享常量
 const mem = @import("std").mem;
 const linux = @import("std").os.linux;
+const constants = @import("constants.zig");
 
 /// 获取单调时钟纳秒时间戳（用于 last_touch_ns）
 fn monotonicNs() u64 {
@@ -13,7 +14,7 @@ fn monotonicNs() u64 {
     return @as(u64, @intCast(ts.sec)) * 1_000_000_000 + @as(u64, @intCast(ts.nsec));
 }
 
-pub const HEAT_POOL_SIZE = 64; // 与 StreamWindow 容量一致
+pub const HEAT_POOL_SIZE = constants.SLOT_COUNT; // 与 StreamWindow 容量一致
 
 pub const HeatPool = struct {
     heats: [HEAT_POOL_SIZE]u16,

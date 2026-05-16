@@ -2,20 +2,21 @@
 // ZigClaw V2.4 | 物理存储池 | 报头生命周期管理 + BodyBufferPool
 const mem = @import("std").mem;
 const core = @import("core.zig");
+const constants = @import("constants.zig");
 
 pub const StreamWindow = struct {
-    headers: [64]core.TokenStreamHeader,
+    headers: [constants.SLOT_COUNT]core.TokenStreamHeader,
     len: u64,
 
     pub fn init() StreamWindow {
         return .{
-            .headers = [_]core.TokenStreamHeader{core.TokenStreamHeader.init()} ** 64,
+            .headers = [_]core.TokenStreamHeader{core.TokenStreamHeader.init()} ** constants.SLOT_COUNT,
             .len = 0,
         };
     }
 
     pub fn push_header(self: *StreamWindow, header: core.TokenStreamHeader) void {
-        if (self.len < 64) {
+        if (self.len < constants.SLOT_COUNT) {
             self.headers[self.len] = header;
             self.len += 1;
         }

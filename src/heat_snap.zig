@@ -3,10 +3,10 @@
 // 热度快照 — 双版本头 + io_uring 异步写入 + 零序列化内存直拷
 //
 // 架构（显性直白）：
-//   单文件（如 /var/lib/zigclaw_heat.bin），大小 8256 字节
-//   Header V0 (64B) + Header V1 (64B) + Padding (64B) + Data Body (8128B)
+//   单文件（如 /var/lib/zigclaw_heat.bin），大小 8320 字节
+//   Header V0 (64B) + Header V1 (64B) + Padding (64B) + Data Body (8128B) = 8320B
 //   双 Header 交替写入，恢复时取有效者
-//   Data Body = HeatPool(u16[64]) + last_touch_ns(u64[64])，共 640B，Padding 到 8128B
+//   Data Body = HeatPool(u16[SLOT_COUNT]) + last_touch_ns(u64[SLOT_COUNT])，共 SLOT_COUNT * 10B，Padding 到 8128B
 //
 // 军规遵循：
 //   - 精确导入（无 const std = @import("std")）
@@ -21,6 +21,7 @@ const log = @import("std").log;
 const debug = @import("std").debug;
 const io_uring = @import("io_uring.zig");
 const heat_pool = @import("heat_pool.zig");
+const constants = @import("constants.zig");
 
 // ============================================================================
 // 常量
@@ -29,7 +30,7 @@ const heat_pool = @import("heat_pool.zig");
 const SNAP_HEADER_SIZE: usize = 64;
 const SNAP_PADDING_SIZE: usize = 64;
 const SNAP_BODY_SIZE: usize = 8128; // HeatPool(128B) + last_touch_ns(512B) + Padding(7488B)
-const SNAP_FILE_SIZE: usize = SNAP_HEADER_SIZE * 2 + SNAP_PADDING_SIZE + SNAP_BODY_SIZE; // 8256B
+const SNAP_FILE_SIZE: usize = SNAP_HEADER_SIZE * 2 + SNAP_PADDING_SIZE + SNAP_BODY_SIZE; // 8320B
 
 const MAGIC: u32 = 0x5A434C57; // 'ZCLW'
 
@@ -37,28 +38,29 @@ const MAGIC: u32 = 0x5A434C57; // 'ZCLW'
 // SSD Header 定义 (64 字节)
 // ============================================================================
 
-const SnapHeader = packed struct {
-    magic: u32 = MAGIC,
-    version: u32 = 0,              // 0 或 1，标识当前生效版本
-    crc32: u32 = 0,                // CRC32 校验（仅校验 Data Body）
-    timestamp_ns: u64 = 0,         // 单调时钟纳秒（恢复时排序用）
-    reserved: [48]u8 = [_]u8{0} ** 48,
+const SnapHeader = struct {
+    magic: u32 = MAGIC,            // 4B: 魔数 'ZCLW'
+    version: u32 = 0,              // 4B: 版本号 0 或 1
+    crc32: u32 = 0,                // 4B: CRC32 校验
+    timestamp_ns: u64 = 0,         // 8B: 单调时钟纳秒
+    reserved: [11]u32 = [_]u32{0} ** 11, // 44B: 保留
+    // 总计: 4+4+4+8+44 = 64B
 
     /// 构造新 Header（自动翻转版本号）
-    fn init(version: u32, body_ptr: [*]const u8, timestamp: u64) SnapHeader {
+    fn init(version: u32, body_slice: []const u8, timestamp: u64) SnapHeader {
         return .{
             .magic = MAGIC,
             .version = version,
-            .crc32 = hashCrc32(body_ptr[0..SNAP_BODY_SIZE]),
+            .crc32 = hashCrc32(body_slice[0..SNAP_BODY_SIZE]),
             .timestamp_ns = timestamp,
         };
     }
 
     /// 三重校验：魔数 + 版本 + CRC32
-    fn isValid(self: SnapHeader, body_ptr: [*]const u8) bool {
+    fn isValid(self: SnapHeader, body_slice: []const u8) bool {
         if (self.magic != MAGIC) return false;
         if (self.version != 0 and self.version != 1) return false;
-        return self.crc32 == hashCrc32(body_ptr[0..SNAP_BODY_SIZE]);
+        return self.crc32 == hashCrc32(body_slice[0..SNAP_BODY_SIZE]);
     }
 };
 
@@ -114,15 +116,17 @@ pub fn saveHeatPool(pool: *const heat_pool.HeatPool, active_version: *u32) void 
     const body_offset = SNAP_HEADER_SIZE * 2 + SNAP_PADDING_SIZE; // 192
 
     // 序列化 HeatPool 到 Data Body
-    // heats: u16[64] = 128 bytes
-    @memcpy(write_buf[body_offset..][0..128], @as([*]const u8, @ptrCast(&pool.heats))[0..128]);
-    // last_touch_ns: u64[64] = 512 bytes
-    @memcpy(write_buf[body_offset + 128..][0..512], @as([*]const u8, @ptrCast(&pool.last_touch_ns))[0..512]);
+    // heats: u16[SLOT_COUNT] = SLOT_COUNT * 2 bytes
+    const heats_size = constants.SLOT_COUNT * 2;
+    @memcpy(write_buf[body_offset..][0..heats_size], @as([*]const u8, @ptrCast(&pool.heats))[0..heats_size]);
+    // last_touch_ns: u64[SLOT_COUNT] = SLOT_COUNT * 8 bytes
+    const touch_size = constants.SLOT_COUNT * 8;
+    @memcpy(write_buf[body_offset + heats_size..][0..touch_size], @as([*]const u8, @ptrCast(&pool.last_touch_ns))[0..touch_size]);
     // 剩余 Padding 置 0xFF
-    @memset(write_buf[body_offset + 640..][0..(SNAP_BODY_SIZE - 640)], 0xFF);
+    @memset(write_buf[body_offset + heats_size + touch_size..][0..(SNAP_BODY_SIZE - heats_size - touch_size)], 0xFF);
 
     // 构造新 Header
-    const new_header = SnapHeader.init(new_ver, &write_buf[body_offset], timestamp);
+    const new_header = SnapHeader.init(new_ver, write_buf[body_offset..], timestamp);
 
     // 写入新 Header 到对应版本槽位
     const header_offset: usize = if (new_ver == 0) 0 else SNAP_HEADER_SIZE;
@@ -132,7 +136,7 @@ pub fn saveHeatPool(pool: *const heat_pool.HeatPool, active_version: *u32) void 
     @memset(write_buf[SNAP_HEADER_SIZE * 2..][0..SNAP_PADDING_SIZE], 0xFF);
 
     // io_uring 异步写入
-    saveToFile(filepath, &write_buf, new_ver);
+    saveToFile(filepath, write_buf[0..], new_ver);
 }
 
 /// 从 SSD 恢复热度池
@@ -146,17 +150,17 @@ pub fn loadHeatPool(pool: *heat_pool.HeatPool) !void {
 
     // 读取整个文件
     var buf: [SNAP_FILE_SIZE]u8 = undefined;
-    const n = try io_uring.read(fd, &buf, SNAP_FILE_SIZE);
+    const n = try io_uring.read(fd, buf[0..], SNAP_FILE_SIZE);
     if (n != SNAP_FILE_SIZE) return error.TruncatedFile;
 
     const body_offset = SNAP_HEADER_SIZE * 2 + SNAP_PADDING_SIZE; // 192
 
-    // 尝试 V0
-    var header = mem.bytesToValue(SnapHeader, buf[0..SNAP_HEADER_SIZE]);
-    if (!header.isValid(&buf[body_offset])) {
+    // 尝试 V0（直接指针转换，零解析）
+    const header_ptr = @as(*const SnapHeader, @alignCast(@ptrCast(&buf[0])));
+    if (!header_ptr.isValid(buf[body_offset..])) {
         // V0 无效，尝试 V1
-        header = mem.bytesToValue(SnapHeader, buf[SNAP_HEADER_SIZE..][0..SNAP_HEADER_SIZE]);
-        if (!header.isValid(&buf[body_offset])) {
+        const header_v1 = @as(*const SnapHeader, @alignCast(@ptrCast(&buf[SNAP_HEADER_SIZE])));
+        if (!header_v1.isValid(buf[body_offset..])) {
             return error.CorruptedSnapshot;
         }
     }
@@ -188,12 +192,12 @@ fn getSnapPath() [*:0]const u8 {
 }
 
 /// io_uring 异步写入文件
-fn saveToFile(filepath: [*:0]const u8, data: *const [SNAP_FILE_SIZE]u8, new_ver: u32) void {
+fn saveToFile(filepath: [*:0]const u8, data: []const u8, new_ver: u32) void {
     // 打开文件（创建/截断）
     const fd = io_uring.Syscall.openat(
         -100,
         filepath,
-        io_uring.Syscall.O_WRONLY | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
+        io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
         0o644,
     ) catch |err| {
         log.err("heat_snap: openat 失败: {s}", .{@errorName(err)});
@@ -202,7 +206,7 @@ fn saveToFile(filepath: [*:0]const u8, data: *const [SNAP_FILE_SIZE]u8, new_ver:
     defer io_uring.Syscall.close(@as(u32, @intCast(fd)));
 
     // io_uring 异步写入
-    _ = io_uring.write(fd, data, SNAP_FILE_SIZE) catch |err| {
+    _ = io_uring.write(fd, data.ptr, data.len) catch |err| {
         log.err("heat_snap: write 失败: {s}", .{@errorName(err)});
         return;
     };
@@ -216,5 +220,5 @@ fn saveToFile(filepath: [*:0]const u8, data: *const [SNAP_FILE_SIZE]u8, new_ver:
 
 comptime {
     debug.assert(@sizeOf(SnapHeader) == SNAP_HEADER_SIZE);
-    debug.assert(SNAP_FILE_SIZE == 8256);
+    debug.assert(SNAP_FILE_SIZE == 8320);
 }

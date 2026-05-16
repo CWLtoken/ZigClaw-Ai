@@ -54,7 +54,6 @@ const debug = @import("std").debug;
 
 // 新模块：架构师五层架构对齐（P42-P46）
 const hp = @import("heat_pool.zig");
-const sp = @import("ssd_persist.zig");
 const hs = @import("heat_snap.zig");
 const vi = @import("vector_index.zig");
 const rt = @import("route_table.zig");
@@ -119,7 +118,7 @@ comptime {
     _ = ac; // async_coordinator 测试
     // 新模块测试（P42-P46）
     _ = hp;
-    _ = sp;
+    _ = hs;
     _ = vi;
     _ = rt;
     _ = ib;
