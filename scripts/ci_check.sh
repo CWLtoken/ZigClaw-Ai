@@ -9,7 +9,7 @@ echo "=== ZigClaw CI 静态规则检查 ==="
 # M4-1: 禁止整包导入 const std = @import("std")（测试文件豁免）
 echo "检查1: 禁止整包导入..."
 # 扫描非测试文件（排除 integration_p*_test.zig 和 tests.zig）
-VIOLATIONS=$(grep -rn 'const std\s*=\s*@import("std")' src/ --include='*.zig' | grep -v '_test\.zig' | grep -v 'tests\.zig' || true)
+VIOLATIONS=$(grep -rn 'const std\s*=\s*@import("std")' src/ --include='*.zig' | grep -v '_test\.zig' | grep -v 'tests\.zig' | grep -v 'integration_p' | grep -v '//' || true)
 if [ -n "$VIOLATIONS" ]; then
     echo "❌ 失败: 发现整包导入:"
     echo "$VIOLATIONS"

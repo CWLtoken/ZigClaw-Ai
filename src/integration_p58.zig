@@ -9,22 +9,21 @@
 // 验证 file_store 的 vtable.get/vtable.set 可调用且不崩溃
 // ============================================================================
 
-test "P58-1: FileStore StorageVTable 调用链路" {
-    const fs = @import("file_store.zig");
+test "P58-1: StorageArena 持久化链路" {
+    const sa = @import("storage_arena.zig");
 
-    const store = fs.FileStore.init("/tmp/zigclaw_contract_test.bin");
+    var arena = sa.StorageArena.init();
+    arena.snap_path = "/tmp/zigclaw_contract_test.bin";
 
-    // 验证 vtable.get 可调用（当前返回 null，因为 FileStore 暂不支持 key-value get）
-    const result = fs.vtable.get(&store, 42);
-    @import("std").debug.assert(result == null); // 当前实现返回 null
-
-    // 验证 vtable.set 可调用（当前为空操作）
-    fs.vtable.set(&store, 42, "test") catch {};
+    // 创建测试热度池
+    _ = arena.update_heat(0, true);
+    _ = arena.update_heat(1, true);
+    @import("std").debug.assert(arena.get_heat(0) > 0);
 
     // 清理
-    store.deleteFile();
+    arena.deleteFile();
 
-    @import("std").debug.print("P58-1: FileStore StorageVTable 调用链路 通过\n", .{});
+    @import("std").debug.print("P58-1: StorageArena 持久化链路 通过\n", .{});
 }
 
 // ============================================================================

@@ -1,10 +1,12 @@
 // src/http_server.zig
 // ZigClaw V2.4 | 阶段23C | 故障恢复与可观测性
 // 架构升级：run() 改为基于 Reactor 的异步事件循环
+
 const atomic = @import("std").atomic;
 const debug = @import("std").debug;
 const fmt = @import("std").fmt;
 const heap = @import("std").heap;
+const log = @import("std").log;
 const mem = @import("std").mem;
 const StringHashMap = @import("std").StringHashMap;
 const linux = @import("std").os.linux;
@@ -76,39 +78,9 @@ fn getCurrentTimeMs() i64 {
     return @as(i64, @intCast(ts.sec)) * 1000 + @as(i64, @intCast(@divTrunc(ts.nsec, 1_000_000)));
 }
 
-// HTTP 请求结构（栈分配，零堆）
-const HttpRequest = struct {
-    method: []const u8,
-    path: []const u8,
-    query: ?[]const u8,
-    headers: StringHashMap([]const u8),
-    body: []const u8,
-
-    fn deinit(self: *HttpRequest) void {
-        self.headers.deinit();
-    }
-};
-
-// HTTP 响应结构
-const HttpResponse = struct {
-    status_code: u16,
-    status_text: []const u8,
-    headers: StringHashMap([]const u8),
-    body: []const u8,
-
-    fn init() HttpResponse {
-        return HttpResponse{
-            .status_code = 200,
-            .status_text = "OK",
-            .headers = StringHashMap([]const u8).init(heap.page_allocator),
-            .body = "",
-        };
-    }
-
-    fn deinit(self: *HttpResponse) void {
-        self.headers.deinit();
-    }
-};
+// ARCH-2: 删除 HttpRequest/HttpResponse 死代码
+// http_server 使用内联解析，routeAndRespond 直接接收 path/query/body
+// 所有响应通过栈缓冲区构建，零堆分配
 
 // 异步连接状态
 const ConnState = enum {
@@ -121,17 +93,57 @@ const ConnState = enum {
 const Conn = struct {
     fd: i32,
     state: ConnState,
-    buf: [8192]u8,
+    buf: [RECV_BUF_SIZE]u8,
     nread: usize,
     stream_id: u64,
     recv_iov: io_uring.Iovec,
     recv_req: io_uring.IoRequest,
     send_iov: io_uring.Iovec,
     send_req: io_uring.IoRequest,
+    last_active: i64, // 最后活跃时间（毫秒），用于超时检测（SEC-6）
 };
 
 /// 最大并发连接数（栈分配，固定大小）
 const MAX_CONNS: usize = 256;
+
+/// 接收缓冲区大小（8KB，栈分配，与 MAX_BODY_SIZE 一致）
+const RECV_BUF_SIZE: usize = 8192;
+
+/// 最大请求体大小（8KB，防止溢出攻击）
+const MAX_BODY_SIZE: usize = RECV_BUF_SIZE;
+
+/// 连接空闲超时（30秒）
+const IDLE_TIMEOUT_MS: i64 = 30_000;
+
+/// 滑动窗口限流器（SEC-4，零堆分配）
+const RateLimiter = struct {
+    window_start: metrics_mod.AlignedAtomicU64,
+    count: metrics_mod.AlignedAtomicU64,
+    const WINDOW_NS: u64 = 1_000_000_000; // 1秒
+    const MAX_REQUESTS: u64 = 100; // 每秒最多100请求
+
+    pub fn init() RateLimiter {
+        return .{
+            .window_start = metrics_mod.AlignedAtomicU64.init(0),
+            .count = metrics_mod.AlignedAtomicU64.init(0),
+        };
+    }
+
+    pub fn allow(self: *RateLimiter) bool {
+        var ts: linux.timespec = undefined;
+        _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
+        const now = @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(ts.nsec)) / 1_000_000;
+        const start = self.window_start.load(.acquire);
+        if (now - start >= WINDOW_NS / 1000) {
+            // 新窗口，重置计数
+            _ = self.window_start.store(now, .release);
+            _ = self.count.store(1, .release);
+            return true;
+        }
+        const current = self.count.fetchAdd(1, .monotonic);
+        return current < MAX_REQUESTS;
+    }
+};
 
 pub const HttpServer = struct {
     ring: io_uring.Ring,
@@ -142,6 +154,7 @@ pub const HttpServer = struct {
     running: atomic.Value(bool),  // 优雅关闭标志
     shutting_down: atomic.Value(bool),  // 优雅关闭探针（阶段27）
     next_stream_id: atomic.Value(u64),
+    rate_limiter: RateLimiter,  // 滑动窗口限流器（SEC-4）
 
     /// 初始化 HTTP 服务器
     pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
@@ -204,6 +217,7 @@ pub const HttpServer = struct {
             .running = atomic.Value(bool).init(true),
             .shutting_down = atomic.Value(bool).init(false),  // 阶段27：优雅关闭探针
             .next_stream_id = atomic.Value(u64).init(1),
+            .rate_limiter = RateLimiter.init(),
         };
     }
 
@@ -222,6 +236,19 @@ pub const HttpServer = struct {
             switch (event) {
                 .Idle => {
                     if (!self.is_running()) break;
+                    // SEC-6: 连接超时检查（Idle 时扫描超时连接）
+                    const now = getCurrentTimeMs();
+                    var i: usize = 0;
+                    while (i < conn_count) {
+                        if (now - conns[i].last_active > IDLE_TIMEOUT_MS) {
+                            log.info("Connection {d} timed out", .{conns[i].stream_id});
+                            io_uring.Syscall.close(@intCast(conns[i].fd));
+                            self.metrics.dec_connections();
+                            self.removeConn(&conns, &conn_count, i);
+                        } else {
+                            i += 1;
+                        }
+                    }
                     continue;
                 },
                 .IoComplete => |ev| {
@@ -229,6 +256,14 @@ pub const HttpServer = struct {
                         // ACCEPT 完成：ev.result 是新连接的 fd
                         if (ev.result >= 0) {
                             const conn_fd: i32 = @intCast(ev.result);
+
+                            // SEC-4: Rate Limiting 检查
+                            if (!self.rate_limiter.allow()) {
+                                log.warn("Rate limit exceeded, closing connection", .{});
+                                io_uring.Syscall.close(@intCast(conn_fd));
+                                continue;
+                            }
+
                             self.metrics.inc_connections();
 
                             // 为新连接提交 RECV 请求
@@ -236,7 +271,7 @@ pub const HttpServer = struct {
                                 conns[conn_count] = .{
                                     .fd = conn_fd,
                                     .state = .Recv,
-                                    .buf = [_]u8{0} ** 8192,
+                                    .buf = [_]u8{0} ** RECV_BUF_SIZE,
                                     .nread = 0,
                                     .stream_id = self.next_stream_id.rmw(.Add, 1, .monotonic),
                                     .recv_iov = io_uring.Iovec{
@@ -246,6 +281,7 @@ pub const HttpServer = struct {
                                     .recv_req = io_uring.IoRequest{ .stream_id = conns[conn_count].stream_id, .buf_ptr = null },
                                     .send_iov = io_uring.Iovec{ .iov_base = undefined, .iov_len = 0 },
                                     .send_req = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null },
+                                    .last_active = getCurrentTimeMs(),
                                 };
                                 const conn = &conns[conn_count];
                                 conn_count += 1;
@@ -293,8 +329,18 @@ pub const HttpServer = struct {
                         switch (conn.state) {
                             .Recv => {
                                 if (ev.result > 0) {
+                                    // SEC-5: 请求体大小限制
+                                    if (ev.result > MAX_BODY_SIZE) {
+                                        log.warn("Request body too large: {d} bytes", .{ev.result});
+                                        io_uring.Syscall.close(@intCast(conn.fd));
+                                        self.metrics.dec_connections();
+                                        self.removeConn(&conns, &conn_count, conn_idx);
+                                        continue;
+                                    }
+
                                     // RECV 成功：解析请求并路由
                                     conn.nread = @intCast(ev.result);
+                                    conn.last_active = getCurrentTimeMs();
                                     self.metrics.inc_requests();
 
                                     // 解析请求行（简化：只取第一行）
@@ -424,6 +470,7 @@ pub const HttpServer = struct {
             "Content-Type: text/plain; version=0.0.4\r\n" ++
             "Content-Length: {d}\r\n" ++
             "Connection: close\r\n" ++
+            SECURITY_HEADERS ++
             "\r\n{s}",
             .{ metrics_len, metrics_buf[0..metrics_len] }
         ) catch return self.handleServerError();
@@ -434,20 +481,31 @@ pub const HttpServer = struct {
     /// 处理 /v1/infer 占位
     fn handleInferPlaceholder(self: *HttpServer) []const u8 {
         var buf: [512]u8 = undefined;
+        // SEC-7: 错误信息不泄露内部状态
         const body = "{\"error\":\"Service Unavailable\",\"detail\":\"inference module not connected\"}";
         return self.buildJsonResponse(&buf, body);
     }
 
+    /// 安全响应头（SEC-6）
+    const SECURITY_HEADERS: []const u8 =
+        "X-Content-Type-Options: nosniff\r\n" ++
+        "X-Frame-Options: DENY\r\n" ++
+        "X-XSS-Protection: 1; mode=block\r\n";
+
     /// 404 Not Found
     fn handleNotFound(self: *HttpServer) []const u8 {
+        // SEC-12: 记录 404 请求便于安全审计
         _ = self;
-        return "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n\r\n{\"error\":\"Not Found\"}";
+        log.warn("404 Not Found", .{});
+        return "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: 26\r\nConnection: close\r\n" ++ SECURITY_HEADERS ++ "\r\n{\"error\":\"Not Found\"}";
     }
 
     /// 500 Internal Server Error
     fn handleServerError(self: *HttpServer) []const u8 {
+        // SEC-12: 记录 500 错误便于安全审计
         _ = self;
-        return "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n\r\nInternal Server Error";
+        log.err("500 Internal Server Error", .{});
+        return "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 21\r\nConnection: close\r\n" ++ SECURITY_HEADERS ++ "\r\nInternal Server Error";
     }
 
     /// 构建 JSON 响应（辅助函数）
@@ -458,6 +516,7 @@ pub const HttpServer = struct {
             "Content-Type: application/json\r\n" ++
             "Content-Length: {d}\r\n" ++
             "Connection: close\r\n" ++
+            SECURITY_HEADERS ++
             "\r\n{s}",
             .{body.len, body}
         ) catch return "HTTP/1.1 500 Internal Server Error\r\n\r\n";
@@ -481,57 +540,6 @@ pub const HttpServer = struct {
         self.ring.deinit();
     }
 };
-
-/// 解析 HTTP 请求（栈缓冲区版本，零堆分配）
-fn parseHttpRequest(alloc: mem.Allocator, raw: []const u8) !HttpRequest {
-    var headers = StringHashMap([]const u8).init(alloc);
-
-    // 解析请求行
-    const first_line_end = mem.indexOf(u8, raw, "\r\n") orelse return error.InvalidRequest;
-    const first_line = raw[0..first_line_end];
-
-    var iter = mem.splitSequence(u8, first_line, " ");
-    const method = iter.next() orelse return error.InvalidRequest;
-    const full_path = iter.next() orelse return error.InvalidRequest;
-    _ = iter.next(); // 跳过 HTTP/1.1
-
-    // 分离路径和查询参数
-    var path = full_path;
-    var query: ?[]const u8 = null;
-    if (mem.indexOf(u8, full_path, "?")) |pos| {
-        path = full_path[0..pos];
-        query = full_path[pos+1..];
-    }
-
-    // 解析 headers（简化版）
-    var body_start: usize = first_line_end + 2;
-    while (body_start < raw.len) {
-        const line_end = mem.indexOf(u8, raw[body_start..], "\r\n") orelse break;
-        const line = raw[body_start..body_start + line_end];
-        if (line.len == 0) {
-            body_start += 2; // 跳过分隔空行
-            break;
-        }
-
-        if (mem.indexOf(u8, line, ":")) |colon_pos| {
-            const key = mem.trim(u8, line[0..colon_pos], " ");
-            const value = mem.trim(u8, line[colon_pos+1..], " ");
-            try headers.put(key, value);
-        }
-        body_start += line_end + 2;
-    }
-
-    // 提取 body
-    const body = if (body_start < raw.len) raw[body_start..] else "";
-
-    return HttpRequest{
-        .method = method,
-        .path = path,
-        .query = query,
-        .headers = headers,
-        .body = body,
-    };
-}
 
 /// 处理 /health 健康检查（支持 ?verbose=true）
 fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32, query: ?[]const u8) !void {

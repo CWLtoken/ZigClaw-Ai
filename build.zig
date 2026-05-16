@@ -36,8 +36,11 @@ pub fn build(b: *Build) void {
     // -------------------------------------------------
     // 2. 主可执行文件：ZigClaw 服务
     // -------------------------------------------------
+    const use_mt = b.option(bool, "mt", "Enable multi-threaded HTTP server") orelse false;
+    const main_src = if (use_mt) "src/main_mt.zig" else "src/main.zig";
+
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path(main_src),
         .target = target,
         .optimize = optimize,
     });

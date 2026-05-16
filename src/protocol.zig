@@ -58,7 +58,10 @@ pub const Protocol = struct {
                             }
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
-                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id);
+                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id) orelse {
+                                    self.state = .{ .Error = .{ .reason = "body pool full" } };
+                                    return self.state;
+                                };
                                 const dest_ptr = write_slice[0];
                                 @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
                                 self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
@@ -99,7 +102,10 @@ pub const Protocol = struct {
                             }
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
-                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id);
+                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id) orelse {
+                                    self.state = .{ .Error = .{ .reason = "body pool full" } };
+                                    return self.state;
+                                };
                                 const dest_ptr = write_slice[0];
                                 @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
                                 self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));

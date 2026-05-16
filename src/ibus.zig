@@ -17,6 +17,9 @@ const debug = @import("std").debug;
 const feedback = @import("feedback.zig");
 const mem = @import("std").mem;
 const atomic = @import("std").atomic;
+const constants = @import("constants.zig");
+const main = @import("main.zig");
+const storage_arena = @import("storage_arena.zig");
 
 
 
@@ -277,6 +280,27 @@ pub fn formatBusStatus(buf: []u8) usize {
     append(w, &pos, ",\n");
     append(w, &pos, "    \"arena_bytes_allocated\": ");
     pos += printU64(w[pos..], storage.arena_bytes_allocated);
+    append(w, &pos, ",\n");
+    // storage 层快照内省字段
+    append(w, &pos, "    \"slot_count\": ");
+    pos += printU32(w[pos..], @intCast(constants.SLOT_COUNT));
+    append(w, &pos, ",\n");
+    append(w, &pos, "    \"snap_version\": ");
+    pos += printU32(w[pos..], main.g_storage.snap_version);
+    append(w, &pos, ",\n");
+    // total_heat 和 active_slots — 加锁读取快照
+    const snap = main.g_storage.getSnapshot();
+    var total_heat: u64 = 0;
+    var active_slots: u32 = 0;
+    for (snap.heats) |h| {
+        total_heat += h;
+        if (h > 0) active_slots += 1;
+    }
+    append(w, &pos, "    \"total_heat\": ");
+    pos += printU64(w[pos..], total_heat);
+    append(w, &pos, ",\n");
+    append(w, &pos, "    \"active_slots\": ");
+    pos += printU32(w[pos..], active_slots);
     append(w, &pos, "\n  }\n");
 
     append(w, &pos, "}\n");
@@ -313,6 +337,10 @@ pub const FieldId = enum(u8) {
     storage_ssd_flush       = 18,
     storage_vector_search   = 19,
     storage_arena_bytes     = 20,
+    storage_slot_count      = 21,
+    storage_snap_version    = 22,
+    storage_total_heat      = 23,
+    storage_active_slots    = 24,
 };
 
 /// 将 u64 值写入小端字节序（无堆分配）
@@ -409,6 +437,18 @@ pub fn formatBinaryMetrics(buf: []u8) usize {
     pos += writeU64Frame(buf[pos..], .storage_ssd_flush, storage.ssd_flush_count);
     pos += writeU64Frame(buf[pos..], .storage_vector_search, storage.vector_search_count);
     pos += writeU64Frame(buf[pos..], .storage_arena_bytes, storage.arena_bytes_allocated);
+    pos += writeU32Frame(buf[pos..], .storage_slot_count, @intCast(constants.SLOT_COUNT));
+    pos += writeU32Frame(buf[pos..], .storage_snap_version, main.g_storage.snap_version);
+    // total_heat 和 active_slots — 加锁读取快照
+    const snap = main.g_storage.getSnapshot();
+    var total_heat: u64 = 0;
+    var active_slots: u32 = 0;
+    for (snap.heats) |h| {
+        total_heat += h;
+        if (h > 0) active_slots += 1;
+    }
+    pos += writeU64Frame(buf[pos..], .storage_total_heat, total_heat);
+    pos += writeU32Frame(buf[pos..], .storage_active_slots, active_slots);
 
     return pos;
 }

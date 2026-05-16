@@ -56,7 +56,9 @@ test "Phase16: Protocol basic state machine test" {
     var body: [TEST_BODY_LEN]u8 = undefined;
     @memset(&body, 0xAB);
     
-    const dest_ptr, const offset = test_body_pool.get_write_slice(TEST_STREAM_ID);
+    const slice = test_body_pool.get_write_slice(TEST_STREAM_ID) orelse return error.BodyPoolFull;
+    const dest_ptr = slice[0];
+    const offset = slice[1];
     _ = offset;
     @memcpy(dest_ptr[0..TEST_BODY_LEN], &body);
     test_body_pool.advance(TEST_STREAM_ID, TEST_BODY_LEN);

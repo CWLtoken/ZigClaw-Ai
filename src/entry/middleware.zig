@@ -5,9 +5,49 @@
 const debug = @import("std").debug;
 const fmt = @import("std").fmt;
 const mem = @import("std").mem;
+const io_uring = @import("../io_uring.zig");
 
-/// 有效 Token 常量（零拷贝引用）
-const VALID_TOKEN: []const u8 = "secret-token-123";
+/// 从环境变量读取鉴权 Token（零依赖，零硬编码）
+/// 环境变量：ZIGCLAW_AUTH_TOKEN
+/// 未设置时返回 null，鉴权失败
+/// 使用 openat + read 读取 /proc/self/environ（Zig 0.16 无 std.os.getenv）
+fn getAuthToken() ?[]const u8 {
+    const fd = io_uring.Syscall.openat(
+        @as(i32, -100),
+        "/proc/self/environ",
+        io_uring.Syscall.O_RDONLY,
+        0,
+    ) catch return null;
+    defer io_uring.Syscall.close(@intCast(fd));
+
+    var buf: [4096]u8 = undefined;
+    const n = io_uring.read(fd, &buf, buf.len) catch return null;
+    if (n == 0) return null;
+
+    // 在 environ 中搜索 ZIGCLAW_AUTH_TOKEN=
+    const needle = "ZIGCLAW_AUTH_TOKEN=";
+    const env_buf = buf[0..n];
+    var pos: usize = 0;
+    while (pos + needle.len < env_buf.len) {
+        if (mem.eql(u8, env_buf[pos..pos+needle.len], needle)) {
+            const val_start = pos + needle.len;
+            // 环境变量以 null 分隔
+            var val_end = val_start;
+            while (val_end < env_buf.len and env_buf[val_end] != 0) {
+                val_end += 1;
+            }
+            if (val_end > val_start) {
+                return env_buf[val_start..val_end];
+            }
+        }
+        // 跳到下一个 null 分隔的条目
+        while (pos < env_buf.len and env_buf[pos] != 0) {
+            pos += 1;
+        }
+        pos += 1; // 跳过 null
+    }
+    return null;
+}
 
 /// 从 HTTP 请求头中提取 Bearer Token（零拷贝）
 /// 返回 Token 的切片引用，如果不合法返回 null
@@ -54,7 +94,8 @@ pub const AuthResult = struct {
 /// 检查请求鉴权是否通过（v6.1.0 扩展版本）
 pub fn checkAuthWithTenant(headers: []const u8) AuthResult {
     const token = extractBearerToken(headers) orelse return .{ .allowed = false, .tenant_id = 0 };
-    const allowed = mem.eql(u8, token, VALID_TOKEN);
+    const expected = getAuthToken() orelse return .{ .allowed = false, .tenant_id = 0 };
+    const allowed = mem.eql(u8, token, expected);
     // 提取 X-Tenant-ID
     var tenant_id: u64 = 0;
     if (extractHeader(headers, "X-Tenant-ID")) |tid_str| {
@@ -100,11 +141,15 @@ fn extractHeader(headers: []const u8, name: []const u8) ?[]const u8 {
 
 // 单元测试（P47）
 test "P47: 鉴权中间件 - 有效 Token" {
+    // 注意：checkAuth 现在从环境变量 ZIGCLAW_AUTH_TOKEN 读取
+    // 此测试验证 extractBearerToken 解析逻辑
     const headers = 
         "GET /v1/infer HTTP/1.1\r\n" ++
-        "Authorization: Bearer secret-token-123\r\n" ++
+        "Authorization: Bearer test-token\r\n" ++
         "Content-Type: application/json\r\n";
-    debug.assert(checkAuth(headers) == true);
+    const token = extractBearerToken(headers);
+    debug.assert(token != null);
+    debug.assert(mem.eql(u8, token.?, "test-token"));
     debug.print("P47: 有效Token测试通过\n", .{});
 }
 

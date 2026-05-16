@@ -56,7 +56,9 @@ test "Phase19: Basic state machine - up to BodyDone" {
     @memset(&body_buf, 0xBB);
     
     // 写入 body 到 body_pool
-    const dest_ptr, const offset = body_pool.get_write_slice(TEST_STREAM_ID);
+    const slice = body_pool.get_write_slice(TEST_STREAM_ID) orelse return error.BodyPoolFull;
+    const dest_ptr = slice[0];
+    const offset = slice[1];
     _ = offset;
     @memcpy(dest_ptr[0..TEST_BODY_LEN], &body_buf);
     body_pool.advance(TEST_STREAM_ID, TEST_BODY_LEN);
