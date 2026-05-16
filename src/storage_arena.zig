@@ -197,40 +197,38 @@ pub const StorageArena = struct {
 
     // --- SSD 快照操作 ---
 
-    /// 将热池快照写入 SSD（io_uring 异步 + 显式 wait_cqe 完成验证）
+    /// 将热池快照写入 SSD（io_uring 异步）
+    /// 锁生命周期：仅保护热池数据复制，I/O 期间不持有锁
     pub fn saveHeatPool(self: *StorageArena) void {
         const filepath = self.snap_path;
 
         const new_ver = @as(u32, @intCast(@mod(@as(i32, @intCast(self.snap_version)) + 1, 2)));
         const timestamp = monotonicNs();
 
-        // 加锁复制热池数据
-        while (!self.mu.tryLock()) {}
-        defer self.mu.unlock();
-        const snap = self.getSnapshotUnlocked();
-
+        // 阶段1：加锁复制热池数据到本地缓冲区
         var write_buf: [SNAP_FILE_SIZE]u8 = undefined;
         const body_offset = SNAP_HEADER_SIZE * 2 + SNAP_PADDING_SIZE;
 
-        // 序列化 heats
+        while (!self.mu.tryLock()) {}
+        const snap = self.getSnapshotUnlocked();
+        // 序列化 heats + last_touch_ns 到 write_buf
         const heats_size = SLOT_COUNT * 2;
         @memcpy(write_buf[body_offset..][0..heats_size], @as([*]const u8, @ptrCast(&snap.heats))[0..heats_size]);
-        // 序列化 last_touch_ns
         const touch_size = SLOT_COUNT * 8;
         @memcpy(write_buf[body_offset + heats_size..][0..touch_size], @as([*]const u8, @ptrCast(&snap.last_touch_ns))[0..touch_size]);
-        // 剩余 Padding 置 0xFF
         @memset(write_buf[body_offset + heats_size + touch_size..][0..(SNAP_BODY_SIZE - heats_size - touch_size)], 0xFF);
+        self.mu.unlock(); // 复制完成，立即释放锁
 
-        // 构造 Header
+        // 阶段2：构造 Header（不持有锁）
         const new_header = SnapHeader.init(new_ver, write_buf[body_offset..], timestamp);
         const header_offset: usize = if (new_ver == 0) 0 else SNAP_HEADER_SIZE;
         @memcpy(write_buf[header_offset..][0..SNAP_HEADER_SIZE], @as([*]const u8, @ptrCast(&new_header))[0..SNAP_HEADER_SIZE]);
         @memset(write_buf[SNAP_HEADER_SIZE * 2..][0..SNAP_PADDING_SIZE], 0xFF);
 
-        // io_uring 异步写入 + 显式等待完成
+        // 阶段3：io_uring 异步写入（不持有锁）
         saveToFile(filepath, write_buf[0..], new_ver);
 
-        // 更新 snap_version
+        // 阶段4：加锁更新 snap_version
         while (!self.mu.tryLock()) {}
         defer self.mu.unlock();
         self.snap_version = new_ver;
