@@ -98,6 +98,10 @@ fn monotonicNs() u64 {
 // ============================================================================
 
 pub const StorageArena = struct {
+    // --- 内存分配器（单一所有权）---
+    arena: @import("std").heap.ArenaAllocator,
+    allocator: @import("std").mem.Allocator,
+
     // --- 热池核心数据 ---
     heats: [SLOT_COUNT]u16,
     last_touch_ns: [SLOT_COUNT]u64,
@@ -111,13 +115,24 @@ pub const StorageArena = struct {
 
     // --- 初始化 ---
     pub fn init() StorageArena {
+        var arena = @import("std").heap.ArenaAllocator.init(@import("std").heap.page_allocator);
+        const allocator = arena.allocator();
+        const default_path = getDefaultSnapPath();
+        const snap_path = allocator.dupeZ(u8, mem.span(default_path)) catch @panic("snap_path alloc failed");
         return .{
+            .arena = arena,
+            .allocator = allocator,
             .heats = [_]u16{0} ** SLOT_COUNT,
             .last_touch_ns = [_]u64{0} ** SLOT_COUNT,
             .mu = .unlocked,
             .snap_version = 0,
-            .snap_path = getDefaultSnapPath(),
+            .snap_path = @ptrCast(snap_path.ptr),
         };
+    }
+
+    // --- 销毁（单一 deinit 调用）---
+    pub fn deinit(self: *StorageArena) void {
+        self.arena.deinit();
     }
 
     // --- 热池操作（加锁保护）---

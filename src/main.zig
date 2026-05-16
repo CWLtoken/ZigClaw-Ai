@@ -107,6 +107,7 @@ pub fn main() !void {
 
     // 初始化存储层（SSD 快照恢复）
     initStorage();
+    defer g_storage.deinit();
 
     // 初始化服务器指标
     var metrics = http_server.ServerMetrics.init();
@@ -125,7 +126,7 @@ pub fn main() !void {
         return err;
     };
 
-    // 正常退出时保存快照
+    // 正常退出时保存快照（deinit 在 defer 中自动调用）
     saveStorage();
     debug.print("服务器已关闭\n", .{});
 }
