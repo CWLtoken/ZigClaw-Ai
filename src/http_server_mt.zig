@@ -13,6 +13,7 @@
 //   - 零堆分配（连接池在栈上，仅 WorkerContext 在堆上）
 
 const linux = @import("std").os.linux;
+const c = @import("std").c;
 const mem = @import("std").mem;
 const fmt = @import("std").fmt;
 const log = @import("std").log;
@@ -20,8 +21,8 @@ const io_uring = @import("io_uring.zig");
 const reactor = @import("reactor.zig");
 const metrics_mod = @import("metrics.zig");
 
-// pthread_t 在 Zig 0.16 linux 模块中未定义，使用 u64
-const pthread_t = u64;
+// pthread_t 使用 std.c 中的 opaque 类型
+const pthread_t = c.pthread_t;
 
 // ============================================================================
 // 常量
@@ -78,7 +79,7 @@ fn getCurrentTimeMs() i64 {
 
 fn setSocketOption(fd: i32, level: u32, optname: u32, optval: u32) bool {
     const val_ptr: *const u32 = &optval;
-    const rc = linux.syscall4(
+    const rc = linux.syscall5(
         .setsockopt,
         @as(usize, @bitCast(@as(i64, fd))),
         @as(usize, level),
@@ -186,7 +187,7 @@ const WorkerContext = struct {
                             }
                         }
                     } else {
-                        self.handleIoComplete(ev);
+                        self.handleIoComplete(reactor.Event{ .IoComplete = ev });
                     }
                 },
             }
@@ -233,10 +234,14 @@ const WorkerContext = struct {
         }
     }
 
-    fn handleIoComplete(self: *WorkerContext, ev: reactor.Event.IoComplete) void {
+    fn handleIoComplete(self: *WorkerContext, ev: reactor.Event) void {
+        const io = switch (ev) {
+            .IoComplete => |*payload| payload,
+            else => return,
+        };
         var conn_idx: usize = 0;
         while (conn_idx < self.conn_count) {
-            if (self.conns[conn_idx].stream_id == ev.user_data) break;
+            if (self.conns[conn_idx].stream_id == io.user_data) break;
             conn_idx += 1;
         }
         if (conn_idx >= self.conn_count) return;
@@ -245,13 +250,13 @@ const WorkerContext = struct {
 
         switch (conn.state) {
             .Recv => {
-                if (ev.result > 0) {
-                    if (ev.result > MAX_BODY_SIZE) {
-                        log.warn("Worker {d}: 请求体过大: {d}", .{ self.thread_id, ev.result });
+                if (io.result > 0) {
+                    if (io.result > MAX_BODY_SIZE) {
+                        log.warn("Worker {d}: 请求体过大: {d}", .{ self.thread_id, io.result });
                         self.closeConn(conn_idx);
                         return;
                     }
-                    conn.nread = @intCast(ev.result);
+                    conn.nread = @intCast(io.result);
                     conn.last_active = getCurrentTimeMs();
                     self.metrics.inc_requests();
 
@@ -353,8 +358,8 @@ const WorkerContext = struct {
 // Worker 线程入口
 // ============================================================================
 
-fn workerThreadEntry(arg: *anyopaque) callconv(.C) ?*anyopaque {
-    const ctx: *WorkerContext = @ptrCast(@alignCast(arg));
+fn workerThreadEntry(arg: ?*anyopaque) callconv(.c) ?*anyopaque {
+    const ctx: *WorkerContext = @ptrCast(@alignCast(arg orelse unreachable));
     ctx.run() catch |err| {
         log.err("Worker {d}: 异常: {s}", .{ ctx.thread_id, @errorName(err) });
     };
@@ -386,7 +391,7 @@ pub const HttpServerMT = struct {
         var listen_fds = try page_alloc.alloc(i32, num_workers);
         errdefer page_alloc.free(listen_fds);
 
-        var threads = try page_alloc.alloc(pthread_t, num_workers);
+        const threads = try page_alloc.alloc(pthread_t, num_workers);
         errdefer page_alloc.free(threads);
 
         var contexts = try page_alloc.alloc(*WorkerContext, num_workers);
@@ -442,9 +447,9 @@ pub const HttpServerMT = struct {
             ctx.* = try WorkerContext.init(@intCast(i), self.listen_fds[i], self.port, &self.metrics);
             self.contexts[i] = ctx;
 
-            const rc = linux.pthread_create(&self.threads[i], null, workerThreadEntry, @ptrCast(ctx));
-            if (rc != 0) {
-                log.err("Worker {d}: pthread_create 失败: {d}", .{ i, rc });
+            const rc = c.pthread_create(&self.threads[i], null, workerThreadEntry, @ptrCast(@alignCast(ctx)));
+            if (rc != .SUCCESS) {
+                log.err("Worker {d}: pthread_create 失败", .{i});
                 return error.ThreadCreateFailed;
             }
             log.info("Worker {d}: 已启动", .{i});
@@ -453,7 +458,7 @@ pub const HttpServerMT = struct {
 
     pub fn join(self: *HttpServerMT) void {
         for (0..self.num_workers) |i| {
-            _ = linux.pthread_join(self.threads[i], null);
+            _ = c.pthread_join(self.threads[i], null);
             log.info("Worker {d}: 已停止", .{i});
         }
     }
