@@ -81,7 +81,7 @@ test "Phase17: Single stream state machine test" {
     switch (state2) {
         .BodyDone => {},
         .Error => |err| {
-            @import("std").debug.print("Error reason: {s}\n", .{err.reason});
+            @import("std").debug.print("Error code: {d}\n", .{err.code});
         },
         else => {
             @import("std").debug.print("Unexpected state: {s}\n", .{@tagName(state2)});

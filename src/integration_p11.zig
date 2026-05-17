@@ -11,7 +11,7 @@ test "Phase11: ReadFixed/WriteFixed with registered buffer pool" {
 
     // 1. 创建 Ring
     const ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     // 2. 打开临时文件
     const test_path: [*:0]const u8 = "/tmp/zigclaw_p11_fixed";
@@ -21,7 +21,7 @@ test "Phase11: ReadFixed/WriteFixed with registered buffer pool" {
         io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
         0o644,
     );
-    defer io_uring.Syscall.close(@intCast(file_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(file_fd)));
 
     // === 准备固定缓冲区池 ===
     var buf0: [BUF_SIZE]u8 = undefined;

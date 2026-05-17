@@ -6,7 +6,7 @@ const io_uring = @import("io_uring.zig");
 test "Phase7: ReadV from /dev/zero via real io_uring" {
     // 1. 创建 Ring
     const ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     // 2. 打开 /dev/zero
     const dev_zero: [*:0]const u8 = "/dev/zero";
@@ -16,7 +16,7 @@ test "Phase7: ReadV from /dev/zero via real io_uring" {
         io_uring.Syscall.O_RDONLY,
         0,
     );
-    defer io_uring.Syscall.close(@intCast(file_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(file_fd)));
 
     // 3. 准备读缓冲区 + iovec
     var read_buf: [4096]u8 = undefined;

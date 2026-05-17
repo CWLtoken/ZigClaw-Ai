@@ -1,6 +1,5 @@
 // src/io_uring.zig
-// ZigClaw V2.4 | 泥泞合成骨架 | 绝对禁止高级封装
-// 修正：SQ_DEPTH/SQ_MASK 降级为 comptime_int，配合 reactor.zig 守卫
+// ZigClaw V2.5 | io_uring 底层封装 | 零依赖，纯 syscall
 
 pub const SQ_DEPTH = 1024;
 pub const SQ_MASK = SQ_DEPTH - 1;
@@ -14,11 +13,6 @@ comptime {
         @compileError("SQ_MASK must equal SQ_DEPTH - 1");
     }
 }
-
-// Network constants (top-level, accessible via io_uring.AF_INET etc.)
-pub const AF_INET: u32 = 2;
-pub const SOCK_STREAM: u32 = 1;
-pub const INADDR_LOOPBACK: u32 = 0x0100007F;
 
 /// 主机字节序转网络字节序 (u16)
 /// 小端主机需要交换字节，大端主机保持不变
@@ -117,7 +111,7 @@ pub const Ring = struct {
         Syscall.munmap(self.sq_ring_ptr, self.sq_ring_size);
         Syscall.munmap(self.cq_ring_ptr, self.cq_ring_size);
         Syscall.munmap(self.sqes_ptr, self.sqes_size);
-        Syscall.close(self.fd);
+        Syscall.close(@intCast(self.fd));
     }
 
     pub fn init() SyscallError!Ring {
@@ -145,7 +139,7 @@ pub const Ring = struct {
         // === 阶段 2：映射 SQ ring ===
         // 军规：显式错误处理，禁止隐式 try
         const sq_ptr = if (Syscall.map_ring(fd, 0, sq_ring_size)) |val| val else |err| {
-            Syscall.close(fd);
+            Syscall.close(@intCast(fd));
             return err;
         };
 
@@ -156,7 +150,7 @@ pub const Ring = struct {
         // 军规：显式错误处理，禁止隐式 try
         const cq_ptr = if (Syscall.map_ring(fd, 0x8000000, cq_ring_size)) |val| val else |err| {
             Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
-            Syscall.close(fd);
+            Syscall.close(@intCast(fd));
             return err;
         };
 
@@ -176,7 +170,7 @@ pub const Ring = struct {
         if (sqes_raw == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED
             Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
             Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
-            Syscall.close(fd);
+            Syscall.close(@intCast(fd));
             return SyscallError.MmapFailed;
         }
 
@@ -312,10 +306,6 @@ pub const Syscall = struct {
         return @as(u32, @intCast(rc));
     }
 
-    pub fn close(fd: u32) void {
-        _ = linux.syscall1(.close, @as(usize, fd));
-    }
-
     /// 内部函数：取消映射，忽略错误（清理路径无法恢复）
     /// ZC-5-02: 仅供 errdefer 清理链使用
     fn munmap(addr: usize, len: usize) void {
@@ -383,122 +373,75 @@ pub const Syscall = struct {
             0,
             0,
         );
-        // io_uring_register 成功返回 0，失败返回负 errno（作为大 usize）
         if (rc > @as(usize, @bitCast(@as(isize, -4096)))) {
             return SyscallError.RegisterFailed;
         }
     }
 
-    /// Network constants
-    pub const AF_INET: u32 = 2;
-    pub const SOCK_STREAM: u32 = 1;
-    pub const INADDR_LOOPBACK: u32 = 0x0100007F;
+    // ============================================================
+    // 网络函数（来自 net.zig，保持向后兼容）
+    // ============================================================
+    const net = @import("net.zig");
 
-    /// socket(domain, type, protocol) -> fd
-    pub fn socket(domain: u32, sock_type: u32, protocol: u32) SyscallError!i32 {
-        const rc = linux.syscall3(.socket, domain, sock_type, protocol);
-        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
-        if (result < 0) return SyscallError.OpenFailed;
-        return result;
+    pub const AF_INET = net.AF_INET;
+    pub const SOCK_STREAM = net.SOCK_STREAM;
+    pub const INADDR_LOOPBACK = net.INADDR_LOOPBACK;
+
+    pub fn htons(host: u16) u16 {
+        return net.htons(host);
     }
 
-    /// bind(fd, addr, addrlen)
-    pub fn bind(fd: i32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
-        const rc = linux.syscall3(.bind, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), addrlen);
-        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    pub const SockAddrIn = net.SockAddrIn;
+
+    pub fn socket(domain: u32, sock_type: u32, protocol: u32) net.NetError!i32 {
+        return net.socket(domain, sock_type, protocol);
     }
 
-    /// listen(fd, backlog)
-    pub fn listen(fd: i32, backlog: u32) SyscallError!void {
-        const rc = linux.syscall2(.listen, @as(usize, @bitCast(@as(i64, fd))), backlog);
-        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    pub fn bind(fd: i32, addr: *const anyopaque, len: usize) net.NetError!void {
+        return net.bind(fd, @as(*const net.SockAddrIn, @alignCast(@ptrCast(addr))), @as(u32, @intCast(len)));
     }
 
-    /// getsockname(fd, addr, addrlen)
-    pub fn getsockname(fd: i32, addr: *SockAddrIn, addrlen: *u32) SyscallError!void {
-        const rc = linux.syscall3(.getsockname, @as(usize, @bitCast(@as(i64, fd))), @intFromPtr(addr), @intFromPtr(addrlen));
-        if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
+    pub fn listen(fd: i32, backlog: i32) net.NetError!void {
+        return net.listen(fd, @as(u32, @intCast(backlog)));
     }
 
-    /// connect(fd, addr, addrlen) - blocking connect (for test)
-    pub fn connect(fd: u32, addr: *const SockAddrIn, addrlen: u32) SyscallError!void {
-        const rc = linux.syscall3(.connect, @as(usize, fd), @intFromPtr(addr), addrlen);
-        // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
-        if (rc > 0x7FFFFFFFFFFFFFFF) {
-            return SyscallError.OpenFailed;
-        }
-        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
-        if (result < 0 and result != -115) return SyscallError.OpenFailed;
+    pub fn accept(fd: i32, addr: ?*anyopaque, addrlen: ?*u32) net.NetError!i32 {
+        return net.accept(fd, addr, addrlen);
     }
 
-    /// recv(fd, buf, len, flags) - blocking recv (for test verification)
-    pub fn recv(fd: u32, buf: [*]u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = linux.syscall4(.recvfrom, @as(usize, fd), @intFromPtr(buf), len, @as(usize, flags));
-        // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
-        if (rc > 0x7FFFFFFFFFFFFFFF) {
-            return SyscallError.OpenFailed;
-        }
-        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
-        if (result < 0) return SyscallError.OpenFailed;
-        return result;
+    pub fn connect(fd: i32, addr: *const anyopaque, len: usize) net.NetError!void {
+        return net.connect(@as(u32, @intCast(fd)), @as(*const net.SockAddrIn, @alignCast(@ptrCast(addr))), @as(u32, @intCast(len)));
     }
 
-    /// send(fd, buf, len, flags) — 纯 syscall 降维，不经过标准库
-    /// 注意：sendto 系统调用需要 6 个参数，最后两个是 dest_addr=NULL, addrlen=0
-    pub fn send(fd: u32, buf: [*]const u8, len: usize, flags: u32) SyscallError!i32 {
-        const rc = linux.syscall6(
-            .sendto,
-            @as(usize, fd),
-            @intFromPtr(buf),
-            len,
-            @as(usize, flags),
-            @as(usize, 0), // dest_addr = NULL
-            @as(usize, 0), // addrlen = 0
-        );
-        // ZC-9-03: 先检查是否是错误值（高位为1），避免 @intCast panic
-        if (rc > 0x7FFFFFFFFFFFFFFF) {
-            return SyscallError.OpenFailed;
-        }
-        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
-        if (result < 0) {
-            return SyscallError.OpenFailed;
-        }
-        return result;
+    pub fn recv(fd: i32, buf: [*]u8, len: usize, flags: u32) net.NetError!i32 {
+        return net.recv(@as(u32, @intCast(fd)), buf, len, flags);
     }
 
-    /// accept(fd, addr, addrlen) - 接受连接，返回新连接的 fd (i32)
-    /// 注意：返回 i32，负数表示错误
-    pub fn accept(fd: i32, addr: ?*SockAddrIn, addrlen: ?*u32) SyscallError!i32 {
-        const rc = linux.syscall3(
-            .accept,
-            @as(usize, @bitCast(@as(i64, fd))),
-            if (addr) |a| @intFromPtr(a) else 0,
-            if (addrlen) |al| @intFromPtr(al) else 0,
-        );
-        const result: i32 = @bitCast(@as(u32, @truncate(rc)));
-        if (result < 0) return SyscallError.OpenFailed;
-        return result;
+    pub fn send(fd: i32, buf: [*]const u8, len: usize, flags: u32) net.NetError!i32 {
+        return net.send(@as(u32, @intCast(fd)), buf, len, flags);
+    }
+
+    pub fn close(fd: i32) void {
+        net.close(fd);
+    }
+
+    pub fn getsockname(fd: i32, addr: *anyopaque, addrlen: *u32) net.NetError!void {
+        return net.getsockname(fd, @as(*net.SockAddrIn, @alignCast(@ptrCast(addr))), addrlen);
     }
 };
 
-/// Linux struct sockaddr_in (16 bytes, C ABI compatible)
-pub const SockAddrIn = extern struct {
-    family: u16 = 0,
-    port: u16 = 0,
-    addr: u32 = 0,
-    zero: [8]u8 = .{0} ** 8,
-};
-
-/// write(fd, buf, len) - 文件写入，返回写入字节数
+/// write(fd, buf, len) -> 写入字节数
 pub fn write(fd: i32, buf: [*]const u8, len: usize) SyscallError!usize {
     const rc = linux.syscall3(.write, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
     if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     return rc;
 }
 
-/// read(fd, buf, len) - 文件读取，返回读取字节数
+/// read(fd, buf, len) -> 读取字节数
 pub fn read(fd: i32, buf: [*]u8, len: usize) SyscallError!usize {
     const rc = linux.syscall3(.read, @as(usize, @intCast(fd)), @intFromPtr(buf), len);
     if (rc > @as(usize, @bitCast(@as(isize, -4096)))) return SyscallError.OpenFailed;
     return rc;
 }
+
+
