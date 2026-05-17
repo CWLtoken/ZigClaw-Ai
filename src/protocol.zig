@@ -58,13 +58,18 @@ pub const Protocol = struct {
                             }
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
-                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id) orelse {
+                                const opt_write_slice = self.body_pool.get_write_slice(self.active_stream_id);
+                                if (opt_write_slice) |write_slice|
+                                {
+                                    const dest_ptr = write_slice[0];
+                                    @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
+                                    self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
+                                }
+                                else
+                                {
                                     self.state = .{ .Error = .{ .reason = "body pool full" } };
                                     return self.state;
-                                };
-                                const dest_ptr = write_slice[0];
-                                @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
-                                self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
+                                }
                             }
                             const usize_new_len = usize_remaining - usize_consumed;
                             mem.writeInt(u32, header.data[8..12], @as(u32, @intCast(usize_new_len)), .little);
@@ -102,13 +107,18 @@ pub const Protocol = struct {
                             }
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
-                                const write_slice = self.body_pool.get_write_slice(self.active_stream_id) orelse {
+                                const opt_write_slice = self.body_pool.get_write_slice(self.active_stream_id);
+                                if (opt_write_slice) |write_slice|
+                                {
+                                    const dest_ptr = write_slice[0];
+                                    @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
+                                    self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
+                                }
+                                else
+                                {
                                     self.state = .{ .Error = .{ .reason = "body pool full" } };
                                     return self.state;
-                                };
-                                const dest_ptr = write_slice[0];
-                                @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
-                                self.body_pool.advance(self.active_stream_id, @as(u32, @intCast(usize_consumed)));
+                                }
                             }
                             const usize_new_len = usize_remaining - usize_consumed;
                             mem.writeInt(u32, header.data[8..12], @as(u32, @intCast(usize_new_len)), .little);

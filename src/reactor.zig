@@ -63,9 +63,13 @@ pub const Reactor = struct {
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
             // SQ 已满，先 flush 再重试
-            self.flush() catch |err| {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
                 return err;
-            };
+            }
         }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
@@ -106,9 +110,13 @@ pub const Reactor = struct {
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
-            self.flush() catch |err| {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
                 return err;
-            };
+            }
         }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
@@ -149,9 +157,13 @@ pub const Reactor = struct {
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
-            self.flush() catch |err| {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
                 return err;
-            };
+            }
         }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
@@ -193,9 +205,13 @@ pub const Reactor = struct {
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
-            self.flush() catch |err| {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
                 return err;
-            };
+            }
         }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
@@ -236,9 +252,13 @@ pub const Reactor = struct {
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
-            self.flush() catch |err| {
+            if (self.flush()) |_|
+            {
+                // flush 成功，继续
+            } else |err|
+            {
                 return err;
-            };
+            }
         }
         const idx = sq_tail & self.ring.sq_ring_mask;
 
