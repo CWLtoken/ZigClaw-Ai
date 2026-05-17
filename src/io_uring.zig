@@ -15,11 +15,6 @@ comptime {
     }
 }
 
-// Network constants (top-level, accessible via io_uring.AF_INET etc.)
-pub const AF_INET: u32 = 2;
-pub const SOCK_STREAM: u32 = 1;
-pub const INADDR_LOOPBACK: u32 = 0x0100007F;
-
 /// 主机字节序转网络字节序 (u16)
 /// 小端主机需要交换字节，大端主机保持不变
 pub fn htons(port: u16) u16 {
