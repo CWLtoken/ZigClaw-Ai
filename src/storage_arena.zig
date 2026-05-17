@@ -110,6 +110,8 @@ pub const StorageArena = struct {
     mu: atomic.Mutex align(64) = .unlocked,
 
     // --- SSD 快照状态 ---
+    // snap_version: 1/1 toggle only, do not change to monotonic counter
+    // 使用异或翻转(0↔1)而非递增计数器，避免溢出风险
     snap_version: u32,
     snap_path: [*:0]const u8,
 
