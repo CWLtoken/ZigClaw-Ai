@@ -164,8 +164,8 @@ pub const HttpServer = struct {
         };
 
         const listen_fd = io_uring.Syscall.socket(
-            io_uring.AF_INET,
-            io_uring.SOCK_STREAM,
+            io_uring.Syscall.AF_INET,
+            io_uring.Syscall.SOCK_STREAM,
             0,
         ) catch |err| {
             debug.print("socket 失败: {s}\n", .{@errorName(err)});
@@ -176,7 +176,7 @@ pub const HttpServer = struct {
 
         // 绑定 0.0.0.0:listen_port（listen_port 为 0 时系统自动分配）
         var addr = io_uring.SockAddrIn{
-            .family = io_uring.AF_INET,
+            .family = io_uring.Syscall.AF_INET,
             .port = io_uring.htons(listen_port),
             .addr = 0, // 0.0.0.0
         };
