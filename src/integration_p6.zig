@@ -7,7 +7,7 @@ const reactor_mod = @import("reactor.zig");
 test "Phase6: io_uring_enter syscall verification" {
     const ring = try io_uring.Ring.init();
     defer {
-        _ = io_uring.Syscall.close(ring.fd);
+        _ = io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
     }
 
     // 准备 SQE: NOP

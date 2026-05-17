@@ -251,7 +251,7 @@ pub const StorageArena = struct {
         const filepath = self.snap_path;
 
         const fd = io_uring.Syscall.openat(-100, filepath, io_uring.Syscall.O_RDONLY, 0) catch return error.FileNotFound;
-        defer io_uring.Syscall.close(@as(u32, @intCast(fd)));
+        defer io_uring.Syscall.close(fd);
 
         var buf: [SNAP_FILE_SIZE]u8 = undefined;
         const n = try io_uring.read(fd, buf[0..], SNAP_FILE_SIZE);
@@ -336,7 +336,7 @@ pub const StorageArena = struct {
             debug.print("storage_arena: openat 失败: {s}\n", .{@errorName(err)});
             return;
         };
-        defer io_uring.Syscall.close(@as(u32, @intCast(fd)));
+        defer io_uring.Syscall.close(fd);
 
         // 提交写请求
         _ = io_uring.write(fd, data.ptr, data.len) catch |err| {

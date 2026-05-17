@@ -11,7 +11,7 @@ test "Phase10: Batch submit 4 WriteV + verify with ReadV" {
 
     // 1. 创建 Ring
     const ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     // 2. 打开临时文件
     const test_path: [*:0]const u8 = "/tmp/zigclaw_p10_batch";
@@ -21,7 +21,7 @@ test "Phase10: Batch submit 4 WriteV + verify with ReadV" {
         io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
         0o644,
     );
-    defer io_uring.Syscall.close(@intCast(file_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(file_fd)));
 
     // 3. 准备 4 个写缓冲区，各填不同特征值
     var write_bufs: [BATCH_COUNT][BUF_SIZE]u8 = undefined;

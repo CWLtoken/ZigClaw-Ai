@@ -37,6 +37,18 @@ pub const AlignedAtomicU64 = struct {
     pub fn fetchSub(self: *AlignedAtomicU64, v: u64, comptime order: builtin.AtomicOrder) u64 {
         return self.value.fetchSub(v, order);
     }
+
+    /// Compare-and-swap: if *self == expected, set *self = new_value and return null (success).
+    /// Otherwise return the current value (failure).
+    pub fn compareExchangeWeak(self: *AlignedAtomicU64, expected: u64, new_value: u64, comptime success_order: builtin.AtomicOrder, comptime failure_order: builtin.AtomicOrder) ?u64 {
+        const result = @cmpxchgWeak(u64, &self.value.raw, expected, new_value, success_order, failure_order);
+        if (result) |old_val| {
+            // CAS failed, return the old value that was found
+            return old_val;
+        }
+        // CAS succeeded
+        return null;
+    }
 };
 
 // P-4/M-1: 编译期对齐与尺寸守卫 — 确保连续数组时每个元素独占 64B 缓存行

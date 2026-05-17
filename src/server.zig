@@ -5,6 +5,7 @@
 
 // server.zig: 无直接 std 依赖
 const io_uring = @import("io_uring.zig");
+const net = @import("net.zig");
 
 /// 服务端上下文：持有监听 socket 和控制端 socket
 pub const Server = struct {
@@ -17,26 +18,26 @@ pub const Server = struct {
     pub fn init() !Server {
         // 1. 创建监听 socket
         const listen_fd = try io_uring.Syscall.socket(
-            io_uring.AF_INET,
+            net.AF_INET,
             io_uring.SOCK_STREAM,
             0,
         );
         errdefer io_uring.Syscall.close(@intCast(listen_fd));
 
         // 2. 绑定 127.0.0.1:0（内核分配端口）
-        var bind_addr = io_uring.SockAddrIn{
-            .family = io_uring.AF_INET,
+        var bind_addr = net.SockAddrIn{
+            .family = net.AF_INET,
             .port = 0, // 内核分配随机端口
             .addr = io_uring.INADDR_LOOPBACK,
         };
-        try io_uring.Syscall.bind(listen_fd, &bind_addr, @sizeOf(io_uring.SockAddrIn));
+        try io_uring.Syscall.bind(listen_fd, &bind_addr, @sizeOf(net.SockAddrIn));
 
         // 3. 开始监听
         try io_uring.Syscall.listen(listen_fd, 1);
 
         // 4. 获取实际端口
-        var actual_addr: io_uring.SockAddrIn = undefined;
-        var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
+        var actual_addr: net.SockAddrIn = undefined;
+        var addr_len: u32 = @sizeOf(net.SockAddrIn);
         try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
         const actual_port = io_uring.Syscall.htons(actual_addr.port); // ntohs
 

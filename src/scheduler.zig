@@ -12,7 +12,6 @@
 //   - 分裂策略：execute_count 决定目标数量，系统占用 ≥70% 停止
 //   - 自动回收：无任务时 idle → error，保留最少 4 只
 
-const std = @import("std");
 const worker = @import("worker.zig");
 const WorkerState = worker.WorkerState;
 const WorkerPool = worker.WorkerPool;

@@ -6,7 +6,7 @@ const io_uring = @import("io_uring.zig");
 test "Phase8: WriteV to /tmp/zigclaw_p8_test via real io_uring" {
     // 1. 创建 Ring
     const ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     // 2. 打开临时文件（创建 + 截断 + 读写）
     const test_path: [*:0]const u8 = "/tmp/zigclaw_p8_test";
@@ -16,7 +16,7 @@ test "Phase8: WriteV to /tmp/zigclaw_p8_test via real io_uring" {
         io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
         0o644, // 文件权限
     );
-    defer io_uring.Syscall.close(@intCast(file_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(file_fd)));
 
     // 3. 准备写缓冲区 + iovec
     var write_buf: [4096]u8 = undefined;

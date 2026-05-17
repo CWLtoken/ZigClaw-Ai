@@ -9,7 +9,7 @@ test "Phase12: IOSQE_IO_LINK normal chain (WriteV -> FSync)" {
     const BUF_SIZE: u32 = 1024;
 
     const ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     const test_path: [*:0]const u8 = "/tmp/zigclaw_p12_link";
     const file_fd = try io_uring.Syscall.openat(
@@ -18,7 +18,7 @@ test "Phase12: IOSQE_IO_LINK normal chain (WriteV -> FSync)" {
         io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
         0o644,
     );
-    defer io_uring.Syscall.close(@intCast(file_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(file_fd)));
 
     var write_buf: [BUF_SIZE]u8 = undefined;
     @memset(&write_buf, 0x77);
@@ -103,7 +103,7 @@ test "Phase12b: IOSQE_IO_LINK broken chain (WriteV fail -> FSync cancelled)" {
     const BUF_SIZE: u32 = 1024;
 
     const ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     var write_buf: [BUF_SIZE]u8 = undefined;
     @memset(&write_buf, 0x88);

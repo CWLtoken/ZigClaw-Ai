@@ -83,7 +83,7 @@ test "Phase19: Basic state machine - up to BodyDone" {
     switch (state2) {
         .BodyDone => {},
         .Error => |err| {
-            @import("std").debug.print("Error reason: {s}\n", .{err.reason});
+            @import("std").debug.print("Error code: {d}\n", .{err.code});
         },
         else => {
             @import("std").debug.print("Unexpected state: {s}\n", .{@tagName(state2)});

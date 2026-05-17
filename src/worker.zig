@@ -1,10 +1,11 @@
 // src/worker.zig
-// ZigClaw V2.5 | Worker 生命周期管理 | 5 状态 + 分裂计数
+// ZigClaw V2.5 | Worker 生命周期管理 | 5 状态 + 分裂计数 + TaskString 乱序扫描
 //
 // 设计原则（显性直白）：
 //   - 状态转换显式可见，无隐式控制流
 //   - 零堆分配，仅使用栈上和静态内存
 //   - 原子操作保证并发安全，无锁
+//   - Worker 乱序扫描 TaskString，无需调度器分配
 //
 // Worker 状态机：
 //   idle → Acquire → execute → report → error
@@ -12,9 +13,20 @@
 //              (分裂)    (完成)
 //                  ↓         ↓
 //              Acquire    idle
+//
+// 乱序执行：
+//   - Worker 从 TaskString 中任意选取有编号状态任务
+//   - 无高低优先级，扫描顺序即执行顺序
+//   - 成功：有输出，静默清除任务位
+//   - 失败：有错误信息，清除任务位 + 记录失败原因
 
-const std = @import("std");
 const constants = @import("constants.zig");
+const task_string = @import("task_string.zig");
+const cache_layer = @import("cache_layer.zig");
+const TaskString = task_string.TaskString;
+const TaskPool = task_string.TaskPool;
+const SlotState = task_string.SlotState;
+const L1Cache = cache_layer.L1Cache;
 
 /// Worker 状态枚举（显性直白）
 pub const WorkerState = enum(u8) {
@@ -31,6 +43,9 @@ pub const Worker = struct {
     state: WorkerState,
     execute_count: u32,       // execute 分裂计数
     last_active_ts: u64,      // 最后活跃时间戳（用于超时检测）
+    current_slot: u8,         // 当前执行的任务槽位（乱序扫描）
+    scan_offset: u8,          // 扫描偏移（乱序起点）
+    l1_cache: L1Cache,        // L1 本地缓存（从 L2 预取任务）
 
     pub fn init(id: u32) Worker {
         return .{
@@ -38,6 +53,9 @@ pub const Worker = struct {
             .state = .idle,
             .execute_count = 0,
             .last_active_ts = 0,
+            .current_slot = 0,
+            .scan_offset = 0,
+            .l1_cache = L1Cache.init(),
         };
     }
 
@@ -75,18 +93,68 @@ pub const Worker = struct {
         self.state = .error;
     }
 
+    /// 乱序扫描 TaskString，领取一个任务槽位
+    pub fn acquireFromTaskString(self: *Worker, pool: *TaskPool) ?u8 {
+        var slot: u8 = self.scan_offset;
+        var attempts: u8 = 0;
+        while (attempts < 256) : (attempts += 1) {
+            if (pool.task_string.isSet(slot)) {
+                self.current_slot = slot;
+                self.state = .Acquire;
+                pool.slots[slot].state = .executing;
+                self.scan_offset = @intCast((slot + 1) % 256);
+                return slot;
+            }
+            slot = @intCast((slot + 1) % 256);
+        }
+        return null;
+    }
+
+    /// 从 L1 缓存预取任务（流水第一步：L2 → L1）
+    /// 返回预取的任务数
+    pub fn prefetchFromL2(self: *Worker, pool: *TaskPool) u8 {
+        return self.l1_cache.prefetch(&pool.task_string, self.scan_offset);
+    }
+
+    /// 流水执行：从 L1 取一个任务槽位
+    /// 返回槽位号，若 L1 为空返回 null
+    pub fn dequeueFromL1(self: *Worker) ?u8 {
+        return self.l1_cache.dequeue();
+    }
+
+    /// L1 缓存是否为空
+    pub fn l1IsEmpty(self: *const Worker) bool {
+        return self.l1_cache.isEmpty();
+    }
+
+    /// 执行并报告结果（成功）
+    pub fn reportSuccess(self: *Worker, pool: *TaskPool, output: ?[]const u8) void {
+        const slot = self.current_slot;
+        pool.complete(slot, output);
+        self.state = .idle;
+        self.current_slot = 0;
+    }
+
+    /// 执行并报告结果（失败）
+    pub fn reportFailure(self: *Worker, pool: *TaskPool, error_info: []const u8) void {
+        const slot = self.current_slot;
+        pool.fail(slot, error_info);
+        self.state = .idle;
+        self.current_slot = 0;
+    }
+
     /// 分裂计数 → 目标数量（显式直白）
     /// 第1次 execute：2 只 → 2 只（不变）
     /// 第2次 execute：3 只 → 4 只
     /// 第3次 execute：4 只 → 8 只
     /// 第4次 execute：5 只 → 16 只
     pub fn split_target(self: *const Worker) u32 {
-        const count = self.execute_count;
-        if (count <= 2) return 2;   // 2 → 2
-        if (count == 3) return 4;   // 3 → 4
-        if (count == 4) return 8;   // 4 → 8
-        if (count == 5) return 16;  // 5 → 16
-        return count;               // >5 不分裂
+        const count: u32 = self.execute_count;
+        if (count <= 2) return 2;
+        if (count == 3) return 4;
+        if (count == 4) return 8;
+        if (count == 5) return 16;
+        return count;
     }
 
     /// 是否是活跃状态（非 error）
@@ -111,7 +179,7 @@ pub const WorkerPool = struct {
     const MIN_ACTIVE_AGENTS: u32 = 4;
 
     pub fn init() WorkerPool {
-        var pool = WorkerPool{
+        var pool: WorkerPool = WorkerPool{
             .workers = undefined,
             .active_count = 0,
             .idle_count = 0,
