@@ -86,11 +86,12 @@ pub const BodyBufferPool = struct {
             while (cas_retries < MAX_CAS_RETRIES) : (cas_retries += 1) {
                 const old = @atomicLoad(u32, &self.slot_bitmap_raw[word_idx], .acquire);
                 if (old & bit != 0) break; // 槽已被占用，尝试下一个
-                const prev = @atomicRmw(u32, &self.slot_bitmap_raw[word_idx], .Xchg, old | bit, .acq_rel);
-                if (prev == old) {
-                    return slot; // CAS 成功
+                // SEC-1: 使用 .Or 替代 .Xchg 模拟 CAS，语义更清晰
+                const prev = @atomicRmw(u32, &self.slot_bitmap_raw[word_idx], .Or, bit, .acq_rel);
+                if (prev & bit == 0) {
+                    return slot; // 之前为0，设置成功
                 }
-                // CAS 失败，重试
+                // 已被其他线程设置，retry
             }
         }
         return null; // 所有槽已满
@@ -107,35 +108,42 @@ pub const BodyBufferPool = struct {
 
     /// 获取写入切片（CAS 分配槽位）
     /// 显性直白：槽满时返回 null，不 fallback 覆盖
-    pub fn get_write_slice(self: *BodyBufferPool, stream_id: u64) ?struct { [*]u8, u32 } {
+    /// SEC-2: 返回 SlotHandle 携带 CAS 分配的槽索引，避免 advance/get_read_slice/reset_slot 用 @mod 重新计算导致不一致
+    pub const SlotHandle = struct { slot: u32, offset: u32 };
+
+    pub fn get_write_slice(self: *BodyBufferPool, stream_id: u64) ?struct { [*]u8, SlotHandle } {
         const slot = self.alloc_slot(stream_id) orelse {
             return null; // 槽已满，返回 null（不覆盖）
         };
         const offset = self.write_offsets[slot];
-        return .{ @as([*]u8, @ptrCast(&self.buffers[slot][offset])), offset };
+        return .{ @as([*]u8, @ptrCast(&self.buffers[slot][offset])), SlotHandle{ .slot = slot, .offset = offset } };
     }
 
-    /// 获取写入切片（@mod 回退版本，兼容旧接口）
-    /// 仅在确定不会覆盖时使用
+    /// ⚠️ DES-1: 不安全：直接 @mod 映射，不检查槽占用。仅在线程独占/无冲突场景使用
     pub fn get_write_slice_mod(self: *BodyBufferPool, stream_id: u64) struct { [*]u8, u32 } {
         const slot: u32 = @intCast(stream_id % 1024);
         const offset = self.write_offsets[slot];
         return .{ @as([*]u8, @ptrCast(&self.buffers[slot][offset])), offset };
     }
 
-    pub fn advance(self: *BodyBufferPool, stream_id: u64, bytes_written: u32) void {
-        const slot_idx = @mod(stream_id, 1024);
-        self.write_offsets[slot_idx] += bytes_written;
+    /// SEC-2: 使用 SlotHandle 而非 stream_id 重新计算槽索引
+    pub fn advance(self: *BodyBufferPool, handle: SlotHandle, bytes_written: u32) void {
+        self.write_offsets[handle.slot] += bytes_written;
     }
 
     /// 获取读取切片（从 0 到当前写入偏移）
-    pub fn get_read_slice(self: *BodyBufferPool, stream_id: u64, len: u32) []u8 {
-        const slot_idx = @mod(stream_id, 1024);
-        return self.buffers[slot_idx][0..len];
+    /// SEC-2: 使用 SlotHandle 确保与 CAS 分配的槽一致
+    pub fn get_read_slice(self: *BodyBufferPool, handle: SlotHandle, len: u32) []u8 {
+        return self.buffers[handle.slot][0..len];
     }
 
-    pub fn reset_slot(self: *BodyBufferPool, stream_id: u64) void {
-        const slot_idx = @mod(stream_id, 1024);
-        self.write_offsets[slot_idx] = 0;
+    /// SEC-2: 使用 SlotHandle 而非 stream_id 重新计算槽索引
+    pub fn reset_slot(self: *BodyBufferPool, handle: SlotHandle) void {
+        self.write_offsets[handle.slot] = 0;
+        // 同时释放位图槽
+        const word_idx = handle.slot / 32;
+        const bit_idx = handle.slot % 32;
+        const bit: u32 = @as(u32, 1) << @intCast(bit_idx);
+        _ = @atomicRmw(u32, &self.slot_bitmap_raw[word_idx], .And, ~bit, .release);
     }
 };

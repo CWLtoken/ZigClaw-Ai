@@ -56,12 +56,11 @@ test "Phase16: Protocol basic state machine test" {
     var body: [TEST_BODY_LEN]u8 = undefined;
     @memset(&body, 0xAB);
     
-    const slice = test_body_pool.get_write_slice(TEST_STREAM_ID) orelse return error.BodyPoolFull;
-    const dest_ptr = slice[0];
-    const offset = slice[1];
-    _ = offset;
+    const result = test_body_pool.get_write_slice(TEST_STREAM_ID) orelse return error.BodyPoolFull;
+    const dest_ptr = result[0];
+    const handle = result[1];
     @memcpy(dest_ptr[0..TEST_BODY_LEN], &body);
-    test_body_pool.advance(TEST_STREAM_ID, TEST_BODY_LEN);
+    test_body_pool.advance(handle, TEST_BODY_LEN);
     
     // 注意：不要在这里设置 remaining = 0
     // protocol.zig 会自动计算 remaining - consumed
@@ -85,7 +84,7 @@ test "Phase16: Protocol basic state machine test" {
     switch (state2) {
         .BodyDone => {},
         .Error => |err| {
-            @import("std").debug.print("Error reason: {s}\n", .{err.reason});
+            @import("std").debug.print("Error code: {d}\n", .{err.code});
         },
         else => {
             @import("std").debug.print("Unexpected state: {s}\n", .{@tagName(state2)});
@@ -100,7 +99,7 @@ test "Phase16: Protocol basic state machine test" {
     try testing.expectEqual(@as(u32, 0), final_len);
     
     // 验证 body 内容
-    const body_slice = test_body_pool.get_read_slice(TEST_STREAM_ID, TEST_BODY_LEN);
+    const body_slice = test_body_pool.get_read_slice(handle, TEST_BODY_LEN);
     try testing.expectEqual(@as(u8, 0xAB), body_slice[0]);
     
     // 重置

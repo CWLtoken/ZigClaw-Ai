@@ -7,4 +7,6 @@
 
 /// 热度池 / 流窗口槽位数
 /// 与 StreamWindow.capacity 保持一致
-pub const SLOT_COUNT: usize = 64;
+/// 256 槽位 = 256 位 TaskString（分形树离散化）
+/// 槽位范围 → 异构类型：0-63=CPU, 64-127=GPU, 128-191=FPGA, 192-255=ASIC
+pub const SLOT_COUNT: usize = 256;

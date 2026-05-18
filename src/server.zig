@@ -38,7 +38,7 @@ pub const Server = struct {
         var actual_addr: io_uring.SockAddrIn = undefined;
         var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
         try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
-        const actual_port = io_uring.Syscall.htons(actual_addr.port); // ntohs
+        const actual_port = io_uring.htons(actual_addr.port); // ntohs
 
         return Server{
             .listen_fd = listen_fd,

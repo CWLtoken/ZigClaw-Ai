@@ -56,12 +56,11 @@ test "Phase19: Basic state machine - up to BodyDone" {
     @memset(&body_buf, 0xBB);
     
     // 写入 body 到 body_pool
-    const slice = body_pool.get_write_slice(TEST_STREAM_ID) orelse return error.BodyPoolFull;
-    const dest_ptr = slice[0];
-    const offset = slice[1];
-    _ = offset;
+    const result = body_pool.get_write_slice(TEST_STREAM_ID) orelse return error.BodyPoolFull;
+    const dest_ptr = result[0];
+    const handle = result[1];
     @memcpy(dest_ptr[0..TEST_BODY_LEN], &body_buf);
-    body_pool.advance(TEST_STREAM_ID, TEST_BODY_LEN);
+    body_pool.advance(handle, TEST_BODY_LEN);
     
     // 注意：不要设置 remaining = 0，让 protocol.zig 自动计算
     
@@ -83,7 +82,7 @@ test "Phase19: Basic state machine - up to BodyDone" {
     switch (state2) {
         .BodyDone => {},
         .Error => |err| {
-            @import("std").debug.print("Error reason: {s}\n", .{err.reason});
+            @import("std").debug.print("Error code: {d}\n", .{err.code});
         },
         else => {
             @import("std").debug.print("Unexpected state: {s}\n", .{@tagName(state2)});

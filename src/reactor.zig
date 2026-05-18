@@ -58,10 +58,6 @@ pub const Reactor = struct {
 
     /// 向 SQ 提交一个 RECV 请求（延迟提交策略）
     pub fn prepare_recv(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
-        if (fd < 0 or fd == 0xFFFFFFFF) {
-            log.warn("Reactor.prepare_recv: invalid fd: {d}", .{fd});
-            return error.InvalidFileDescriptor;
-        }
         // SQ 满溢防护：检查内核 sq_head，确保有可用槽位
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
@@ -110,13 +106,7 @@ pub const Reactor = struct {
     }
 
     /// 向 SQ 提交一个 ACCEPT 请求（延迟提交策略）
-    /// 2审修复: 验证 listen_fd 有效性，防止 use-after-free
-    pub fn prepare_accept(self: *Reactor, listen_fd: i32, addr: ?*io_uring.SockAddrIn, addrlen: ?*u32, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
-        // 连接状态验证：listen_fd 必须有效（非负且非已关闭标记）
-        if (listen_fd < 0 or listen_fd == 0xFFFFFFFF) {
-            log.warn("Reactor.prepare_accept: invalid listen_fd: {d}", .{listen_fd});
-            return error.InvalidFileDescriptor;
-        }
+    pub fn prepare_accept(self: *Reactor, listen_fd: i32, addr: ?*io_uring.Syscall.SockAddrIn, addrlen: ?*u32, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
@@ -163,10 +153,6 @@ pub const Reactor = struct {
 
     /// 向 SQ 提交一个 SEND 请求（延迟提交策略）
     pub fn prepare_send(self: *Reactor, fd: i32, iovec: *io_uring.Iovec, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
-        if (fd < 0 or fd == 0xFFFFFFFF) {
-            log.warn("Reactor.prepare_send: invalid fd: {d}", .{fd});
-            return error.InvalidFileDescriptor;
-        }
         // SQ 满溢防护：检查内核 sq_head，确保有可用槽位
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
@@ -216,10 +202,6 @@ pub const Reactor = struct {
     /// 向 SQ 提交一个 WRITE 请求（延迟提交策略）
     /// 用于 io_uring 异步文件写入（IORING_OP_WRITE）
     pub fn prepare_write(self: *Reactor, fd: i32, iovec: *const io_uring.Iovec, offset: u64, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
-        if (fd < 0 or fd == 0xFFFFFFFF) {
-            log.warn("Reactor.prepare_write: invalid fd: {d}", .{fd});
-            return error.InvalidFileDescriptor;
-        }
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
@@ -267,10 +249,6 @@ pub const Reactor = struct {
     /// 向 SQ 提交一个 READ 请求（延迟提交策略）
     /// 用于 io_uring 异步文件读取（IORING_OP_READ）
     pub fn prepare_read(self: *Reactor, fd: i32, iovec: *const io_uring.Iovec, offset: u64, io_req: *io_uring.IoRequest) io_uring.SyscallError!void {
-        if (fd < 0 or fd == 0xFFFFFFFF) {
-            log.warn("Reactor.prepare_read: invalid fd: {d}", .{fd});
-            return error.InvalidFileDescriptor;
-        }
         const sq_head = @atomicLoad(u32, self.ring.sq_head, .acquire);
         const sq_tail = @atomicLoad(u32, self.ring.sq_tail, .acquire);
         if (sq_tail - sq_head >= io_uring.SQ_DEPTH) {
@@ -322,11 +300,12 @@ pub const Reactor = struct {
         if (self.flush()) |_|
         {
             // flush 成功，继续
-        } else |flush_err|
+        } else |_|
         {
             // flush 失败意味着内核提交失败，记录后继续
             // 不 panic，不 unreachable，不空 catch
-            log.warn("Reactor.poll: flush failed: {s}", .{@errorName(flush_err)});
+            // SEC-7: 不暴露内核错误名称，使用通用描述
+            log.warn("Reactor.poll: kernel submit failed", .{});
         }
 
         const cq_head = @atomicLoad(u32, self.ring.cq_head, .acquire);
@@ -339,13 +318,15 @@ pub const Reactor = struct {
 
         // 安全校验：user_data 必须非零且指针对齐
         if (cqe.user_data == 0) {
-            log.warn("Reactor.poll: cqe.user_data is zero, skipping", .{});
+            // SEC-7: 不暴露内部指针值，仅记录通用描述
+            log.warn("Reactor.poll: invalid CQE received", .{});
             @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
             return .Idle;
         }
         const req_ptr = @as(*io_uring.IoRequest, @ptrFromInt(cqe.user_data));
         if (@intFromPtr(req_ptr) % @alignOf(io_uring.IoRequest) != 0) {
-            log.warn("Reactor.poll: cqe.user_data misaligned: {x}", .{cqe.user_data});
+            // SEC-7: 不暴露指针对齐地址，仅记录通用描述
+            log.warn("Reactor.poll: misaligned CQE received", .{});
             @atomicStore(u32, self.ring.cq_head, cq_head + 1, .release);
             return .Idle;
         }

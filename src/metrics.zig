@@ -37,6 +37,18 @@ pub const AlignedAtomicU64 = struct {
     pub fn fetchSub(self: *AlignedAtomicU64, v: u64, comptime order: builtin.AtomicOrder) u64 {
         return self.value.fetchSub(v, order);
     }
+
+    /// Compare-and-swap: if *self == expected, set *self = new_value and return null (success).
+    /// Otherwise return the current value (failure).
+    pub fn compareExchangeWeak(self: *AlignedAtomicU64, expected: u64, new_value: u64, comptime success_order: builtin.AtomicOrder, comptime failure_order: builtin.AtomicOrder) ?u64 {
+        const result = @cmpxchgWeak(u64, &self.value.raw, expected, new_value, success_order, failure_order);
+        if (result) |old_val| {
+            // CAS failed, return the old value that was found
+            return old_val;
+        }
+        // CAS succeeded
+        return null;
+    }
 };
 
 // P-4/M-1: 编译期对齐与尺寸守卫 — 确保连续数组时每个元素独占 64B 缓存行
@@ -159,8 +171,22 @@ pub fn incrUringWrite() void {
 }
 
 // P49：窗口槽位使用率（占位，后续从 io_uring 获取）
-pub var uring_sq_ring_used: atomic.Value(u32) = atomic.Value(u32).init(0);
-pub var uring_cq_ring_used: atomic.Value(u32) = atomic.Value(u32).init(0);
+pub var uring_sq_ring_used: AlignedAtomicU32 = AlignedAtomicU32.init(0);
+pub var uring_cq_ring_used: AlignedAtomicU32 = AlignedAtomicU32.init(0);
+
+// DEV-2: 运行时断言防止语义反转——已用槽位必须从 0 开始递增
+// 在 metrics 子系统首次使用时验证，防止未来重构再次反转语义
+var uring_metrics_validated: bool = false;
+fn validateUringMetricsInit() void {
+    if (uring_metrics_validated) return;
+    uring_metrics_validated = true;
+    const sq = uring_sq_ring_used.load(.acquire);
+    const cq = uring_cq_ring_used.load(.acquire);
+    // 初始值必须为 0（空闲），不能是满值
+    if (sq != 0 or cq != 0) {
+        @panic("uring_sq_ring_used/uring_cq_ring_used semantic inversion detected: must init to 0 (free), not full");
+    }
+}
 
 pub fn setSqRingUsed(n: u32) void {
     uring_sq_ring_used.store(n, .release);
@@ -199,6 +225,8 @@ pub const MetricsError = error{BufferTooSmall};
 pub fn formatMetrics(buf: []u8) MetricsError!usize {
     // 确保桶已初始化
     if (!buckets_initialized.load(.acquire)) initLatencyBuckets();
+    // DEV-2: 验证 uring 指标语义未反转
+    validateUringMetricsInit();
 
     const http = http_requests_total.load(.acquire);
     const auth = auth_failures_total.load(.acquire);

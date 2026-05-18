@@ -3,12 +3,9 @@
 // 架构升级：run() 改为基于 Reactor 的异步事件循环
 
 const atomic = @import("std").atomic;
-const debug = @import("std").debug;
 const fmt = @import("std").fmt;
-const heap = @import("std").heap;
 const log = @import("std").log;
 const mem = @import("std").mem;
-const StringHashMap = @import("std").StringHashMap;
 const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
 const reactor = @import("reactor.zig");
@@ -133,13 +130,21 @@ const RateLimiter = struct {
         var ts: linux.timespec = undefined;
         _ = linux.clock_gettime(linux.CLOCK.MONOTONIC, &ts);
         const now = @as(u64, @intCast(ts.sec)) * 1000 + @as(u64, @intCast(ts.nsec)) / 1_000_000;
-        const start = self.window_start.load(.acquire);
-        if (now - start >= WINDOW_NS / 1000) {
-            // 新窗口，重置计数
-            _ = self.window_start.store(now, .release);
-            _ = self.count.store(1, .release);
-            return true;
+
+        // CAS loop: atomically check window expiry and reset if needed,
+        // eliminating the TOCTOU race between load-check and store.
+        var start: u64 = self.window_start.load(.acquire);
+        while (now - start >= WINDOW_NS / 1000) {
+            if (self.window_start.compareExchangeWeak(start, now, .acq_rel, .acquire)) |_| {
+                // We won the race: reset count for the new window
+                self.count.store(1, .release);
+                return true;
+            }
+            // CAS failed: another thread already reset the window; reload and retry
+            start = self.window_start.load(.acquire);
         }
+
+        // Within current window: atomically increment and check
         const current = self.count.fetchAdd(1, .monotonic);
         return current < MAX_REQUESTS;
     }
@@ -159,53 +164,53 @@ pub const HttpServer = struct {
     /// 初始化 HTTP 服务器
     pub fn init(metrics: *ServerMetrics, listen_port: u16) !HttpServer {
         var ring = io_uring.Ring.init() catch |err| {
-            debug.print("Ring.init 失败: {s}\n", .{@errorName(err)});
+            log.err("Ring.init 失败: {s}", .{@errorName(err)});
             return err;
         };
 
         const listen_fd = io_uring.Syscall.socket(
-            io_uring.AF_INET,
-            io_uring.SOCK_STREAM,
+            io_uring.Syscall.AF_INET,
+            io_uring.Syscall.SOCK_STREAM,
             0,
         ) catch |err| {
-            debug.print("socket 失败: {s}\n", .{@errorName(err)});
+            log.err("socket 失败: {s}", .{@errorName(err)});
             ring.deinit();
             return err;
         };
         errdefer ring.deinit();
 
         // 绑定 0.0.0.0:listen_port（listen_port 为 0 时系统自动分配）
-        var addr = io_uring.SockAddrIn{
-            .family = io_uring.AF_INET,
-            .port = io_uring.htons(listen_port),
+        var addr = io_uring.Syscall.SockAddrIn{
+            .family = io_uring.Syscall.AF_INET,
+            .port = io_uring.Syscall.htons(listen_port),
             .addr = 0, // 0.0.0.0
         };
-        io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.SockAddrIn)) catch |err| {
-            debug.print("bind 失败: {s}\n", .{@errorName(err)});
+        io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.Syscall.SockAddrIn)) catch |err| {
+            log.err("bind 失败: {s}", .{@errorName(err)});
             io_uring.Syscall.close(@intCast(listen_fd));
             return err;
         };
         io_uring.Syscall.listen(listen_fd, 128) catch |err| {
-            debug.print("listen 失败: {s}\n", .{@errorName(err)});
+            log.err("listen 失败: {s}", .{@errorName(err)});
             io_uring.Syscall.close(@intCast(listen_fd));
             return err;
         };
 
         // 获取实际端口
-        var actual_addr: io_uring.SockAddrIn = undefined;
-        var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
+        var actual_addr: io_uring.Syscall.SockAddrIn = undefined;
+        var addr_len: u32 = @sizeOf(io_uring.Syscall.SockAddrIn);
         io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len) catch |err| {
-            debug.print("getsockname 失败: {s}\n", .{@errorName(err)});
+            log.err("getsockname 失败: {s}", .{@errorName(err)});
             io_uring.Syscall.close(@intCast(listen_fd));
             return err;
         };
-        const port = io_uring.htons(actual_addr.port);
+        const port = io_uring.Syscall.htons(actual_addr.port);
 
-        debug.print("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/\n", .{port});
-        debug.print("   路由：\n", .{});
-        debug.print("     GET /health → 健康检查\n", .{});
-        debug.print("     GET /health?verbose=true → 详细指标\n", .{});
-        debug.print("     GET /v1/infer?input=xxx&modality=text|image → 推理\n", .{});
+        log.info("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/", .{port});
+        log.info("   路由：", .{});
+        log.info("     GET /health → 健康检查", .{});
+        log.info("     GET /health?verbose=true → 详细指标", .{});
+        log.info("     GET /v1/infer?input=xxx&modality=text|image → 推理", .{});
 
         const r = reactor.Reactor.init(ring);
         return HttpServer{
@@ -228,7 +233,7 @@ pub const HttpServer = struct {
         var conn_count: usize = 0;
 
         // 提交初始 ACCEPT 请求
-        var accept_req = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null };
+        var accept_req: io_uring.IoRequest = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null };
         try self.reactor.prepare_accept(self.listen_fd, null, null, &accept_req);
 
         while (self.is_running()) {
@@ -287,7 +292,7 @@ pub const HttpServer = struct {
                                 conn_count += 1;
 
                                 self.reactor.prepare_recv(conn_fd, &conn.recv_iov, &conn.recv_req) catch |err| {
-                                    debug.print("提交 RECV 失败: {s}\\n", .{@errorName(err)});
+                                    log.err("提交 RECV 失败: {s}", .{@errorName(err)});
                                     io_uring.Syscall.close(@intCast(conn.fd));
                                     self.metrics.dec_connections();
                                     conn_count -= 1;
@@ -295,23 +300,23 @@ pub const HttpServer = struct {
                                 };
                             } else {
                                 // 连接数超限，直接关闭
-                                debug.print("连接数超限，关闭 fd={d}\n", .{conn_fd});
+                                log.warn("连接数超限，关闭 fd={d}", .{conn_fd});
                                 io_uring.Syscall.close(@intCast(conn_fd));
                                 self.metrics.dec_connections();
                             }
                         }
                         // 重新提交 ACCEPT
                         if (self.is_running()) {
-                            var new_accept_req = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null };
+                            var new_accept_req: io_uring.IoRequest = io_uring.IoRequest{ .stream_id = 0, .buf_ptr = null };
                             self.reactor.prepare_accept(self.listen_fd, null, null, &new_accept_req) catch |err| {
-                                debug.print("重新提交 ACCEPT 失败: {s}\n", .{@errorName(err)});
+                                log.err("重新提交 ACCEPT 失败: {s}", .{@errorName(err)});
                                 return;
                             };
                         }
                     } else {
                         // RECV/SEND 完成：查找对应连接
                         var conn_idx: usize = 0;
-                        var found = false;
+                        var found: bool = false;
                         while (conn_idx < conn_count) : (conn_idx += 1) {
                             if (conns[conn_idx].stream_id == ev.user_data) {
                                 found = true;
@@ -366,13 +371,13 @@ pub const HttpServer = struct {
                                     const response = self.routeAndRespond(path, query, raw[first_line_end..]);
 
                                     // 提交 SEND
-                                    var send_iov = io_uring.Iovec{
+                                    var send_iov: io_uring.Iovec = io_uring.Iovec{
                                         .iov_base = @constCast(response.ptr),
                                         .iov_len = response.len,
                                     };
                                     var send_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
                                     self.reactor.prepare_send(conn.fd, &send_iov, &send_req) catch |err| {
-                                        debug.print("提交 SEND 失败: {s}\n", .{@errorName(err)});
+                                        log.err("提交 SEND 失败: {s}\n", .{@errorName(err)});
                                         io_uring.Syscall.close(@intCast(conn.fd));
                                         self.metrics.dec_connections();
                                         self.removeConn(&conns, &conn_count, conn_idx);
@@ -399,7 +404,7 @@ pub const HttpServer = struct {
             }
         }
 
-        debug.print("服务器停止接受新连接\n", .{});
+        log.info("服务器停止接受新连接\n", .{});
         // 关闭所有活跃连接
         for (0..conn_count) |i| {
             io_uring.Syscall.close(@intCast(conns[i].fd));
@@ -439,20 +444,20 @@ pub const HttpServer = struct {
         const verbose = if (query) |q| mem.indexOf(u8, q, "verbose=true") != null else false;
         var buf: [1024]u8 = undefined;
 
-        if (verbose) {
+        // Build the JSON body (verbose or simple)
+        const body: []const u8 = if (verbose) blk: {
             const uptime_ms = self.metrics.get_uptime_ms();
             const total_requests = self.metrics.get_total_requests();
             const active = self.metrics.get_active_connections();
             const errors = self.metrics.get_error_count();
-            const body = fmt.bufPrint(&buf,
+            break :blk fmt.bufPrint(&buf,
                 "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}}",
                 .{ uptime_ms, total_requests, active, errors, self.shutting_down.load(.acquire) }
             ) catch return self.handleNotFound();
-            return self.buildJsonResponse(&buf, body);
-        } else {
-            const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
-            return self.buildJsonResponse(&buf, body);
-        }
+        } else "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
+
+        // Common response building (single call site, no duplication)
+        return self.buildJsonResponse(&buf, body);
     }
 
     /// 处理 /metrics 请求（T2 修复：使用分离缓冲区）
@@ -540,87 +545,3 @@ pub const HttpServer = struct {
         self.ring.deinit();
     }
 };
-
-/// 处理 /health 健康检查（支持 ?verbose=true）
-fn handleHealth(metrics: *const ServerMetrics, shutting_down: bool, conn_fd: i32, query: ?[]const u8) !void {
-    const verbose = if (query) |q| mem.indexOf(u8, q, "verbose=true") != null else false;
-
-    if (verbose) {
-        // 详细模式：返回 JSON 包含 uptime、total_requests、active_connections、error_count
-        const uptime_ms = metrics.get_uptime_ms();
-        const total_requests = metrics.get_total_requests();
-        const active = metrics.get_active_connections();
-        const errors = metrics.get_error_count();
-
-        var body_buf: [512]u8 = undefined;
-        const body = try fmt.bufPrint(&body_buf,
-            "{{\"status\":\"ok\",\"uptime_ms\":{d},\"total_requests\":{d},\"active_connections\":{d},\"error_count\":{d},\"shutting_down\":{any}}}",
-            .{ uptime_ms, total_requests, active, errors, shutting_down }
-        );
-
-        var resp_buf: [1024]u8 = undefined;
-        const response = try fmt.bufPrint(&resp_buf,
-            "HTTP/1.1 200 OK\r\n" ++
-            "Content-Type: application/json\r\n" ++
-            "Content-Length: {d}\r\n" ++
-            "Connection: close\r\n" ++
-            "\r\n{s}",
-            .{ body.len, body }
-        );
-
-        _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch |err| {
-            debug.print("发送详细健康响应失败: {}\n", .{err});
-            return;
-        };
-    } else {
-        // 简单模式（栈缓冲区，零堆分配）
-        const body = "{\"status\":\"ok\",\"service\":\"zigclaw-http\"}";
-        var resp_buf: [512]u8 = undefined;
-        const response = fmt.bufPrint(&resp_buf,
-            "HTTP/1.1 200 OK\r\n" ++
-            "Content-Type: application/json\r\n" ++
-            "Content-Length: {d}\r\n" ++
-            "Connection: close\r\n" ++
-            "\r\n{s}",
-            .{body.len, body}
-        ) catch {
-            sendErrorResponse(conn_fd, 500, "Internal Server Error") catch {};
-            return;
-        };
-
-        _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch |err| {
-            debug.print("发送健康响应失败: {}\n", .{err});
-            return;
-        };
-    }
-
-    debug.print("/health 请求处理完成 (verbose={})\n", .{verbose});
-}
-
-/// 发送错误响应（栈缓冲区，零堆分配）
-fn sendErrorResponse(conn_fd: i32, status_code: u16, message: []const u8) !void {
-    var buf: [512]u8 = undefined;
-    const response = fmt.bufPrint(&buf,
-        "HTTP/1.1 {d} {s}\r\n" ++
-        "Content-Type: text/plain\r\n" ++
-        "Content-Length: {d}\r\n" ++
-        "Connection: close\r\n" ++
-        "\r\n{s}",
-        .{status_code, message, message.len, message}
-    ) catch {
-        // 缓冲区不足，截断消息
-        const truncated = message[0..@min(message.len, 256)];
-        const fallback = fmt.bufPrint(&buf,
-            "HTTP/1.1 {d} {s}\r\n" ++
-            "Content-Type: text/plain\r\n" ++
-            "Content-Length: {d}\r\n" ++
-            "Connection: close\r\n" ++
-            "\r\n{s}",
-            .{status_code, truncated, truncated.len, truncated}
-        ) catch return;
-        _ = io_uring.Syscall.send(@intCast(conn_fd), fallback.ptr, fallback.len, 0) catch {};
-        return;
-    };
-
-    _ = io_uring.Syscall.send(@intCast(conn_fd), response.ptr, response.len, 0) catch {};
-}

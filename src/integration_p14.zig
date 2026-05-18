@@ -4,32 +4,32 @@ const mem = @import("std").mem;
 
 test "Phase14: io_uring RECV + SEND full bidirectional loop" {
     var ring = try io_uring.Ring.init();
-    defer io_uring.Syscall.close(ring.fd);
+    defer io_uring.Syscall.close(@as(i32, @intCast(ring.fd)));
 
     // 1. create listen socket
     const listen_fd = try io_uring.Syscall.socket(2, 1, 0);
-    defer io_uring.Syscall.close(@intCast(listen_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(listen_fd)));
 
     // 2. bind 127.0.0.1:0
-    var bind_addr = io_uring.SockAddrIn{
+    var bind_addr = io_uring.Syscall.SockAddrIn{
         .family = 2,
         .port = 0,
         .addr = 0x0100007F,
     };
-    try io_uring.Syscall.bind(listen_fd, &bind_addr, @sizeOf(io_uring.SockAddrIn));
+    try io_uring.Syscall.bind(listen_fd, &bind_addr, @sizeOf(io_uring.Syscall.SockAddrIn));
 
     // 3. listen
     try io_uring.Syscall.listen(listen_fd, 1);
 
     // 4. getsockname to get actual port
-    var actual_addr: io_uring.SockAddrIn = undefined;
-    var addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
+    var actual_addr: io_uring.Syscall.SockAddrIn = undefined;
+    var addr_len: u32 = @sizeOf(io_uring.Syscall.SockAddrIn);
     try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
-    const actual_port = io_uring.htons(actual_addr.port);
+    const actual_port = io_uring.Syscall.htons(actual_addr.port);
 
     // 5. submit ACCEPT via io_uring
-    var client_addr: io_uring.SockAddrIn = undefined;
-    var client_addr_len: u32 = @sizeOf(io_uring.SockAddrIn);
+    var client_addr: io_uring.Syscall.SockAddrIn = undefined;
+    var client_addr_len: u32 = @sizeOf(io_uring.Syscall.SockAddrIn);
     var sq_tail = @atomicLoad(u32, ring.sq_tail, .acquire);
     const sqe_a = &ring.sq_entries[sq_tail & ring.sq_ring_mask];
     sqe_a.* = .{
@@ -54,14 +54,14 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
     // 6. connect (blocking, for test simplicity)
     const connect_fd = try io_uring.Syscall.socket(2, 1, 0);
     const connect_fd_u32: u32 = @intCast(connect_fd);
-    defer io_uring.Syscall.close(connect_fd_u32);
-    defer io_uring.Syscall.close(@intCast(connect_fd));
-    var server_addr = io_uring.SockAddrIn{
+    defer io_uring.Syscall.close(@as(i32, @intCast(connect_fd_u32)));
+    defer io_uring.Syscall.close(@as(i32, @intCast(connect_fd)));
+    var server_addr = io_uring.Syscall.SockAddrIn{
         .family = 2,
-        .port = io_uring.htons(actual_port),
+        .port = io_uring.Syscall.htons(actual_port),
         .addr = 0x0100007F,
     };
-    try io_uring.Syscall.connect(connect_fd_u32, &server_addr, @sizeOf(io_uring.SockAddrIn));
+    try io_uring.Syscall.connect(@as(i32, @intCast(connect_fd_u32)), &server_addr, @sizeOf(io_uring.Syscall.SockAddrIn));
 
     // 7. wait for ACCEPT completion
     const submitted_a = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);
@@ -71,12 +71,12 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
     try testing.expectEqual(@as(u64, 9001), cqe_a.user_data);
     try testing.expect(cqe_a.res >= 0);
     const accepted_fd: i32 = @intCast(cqe_a.res);
-    defer io_uring.Syscall.close(@intCast(accepted_fd));
+    defer io_uring.Syscall.close(@as(i32, @intCast(accepted_fd)));
     @atomicStore(u32, ring.cq_head, cq_head + 1, .release);
 
     // 8. client sends "PING"
     const ping_msg = "PING";
-    const sent = try io_uring.Syscall.send(connect_fd_u32, ping_msg.ptr, ping_msg.len, 0);
+    const sent = try io_uring.Syscall.send(@as(i32, @intCast(connect_fd_u32)), ping_msg.ptr, ping_msg.len, 0);
     try testing.expectEqual(@as(i32, ping_msg.len), sent);
 
     // 9. submit RECV via io_uring to receive "PING"
@@ -148,7 +148,7 @@ test "Phase14: io_uring RECV + SEND full bidirectional loop" {
 
     // 13. client recv "PONG" to verify
     var client_recv_buf: [16]u8 = undefined;
-    const received = try io_uring.Syscall.recv(connect_fd_u32, &client_recv_buf, client_recv_buf.len, 0);
+    const received = try io_uring.Syscall.recv(@as(i32, @intCast(connect_fd_u32)), &client_recv_buf, client_recv_buf.len, 0);
     try testing.expectEqual(@as(i32, pong_msg.len), received);
     try testing.expectEqualSlices(u8, pong_msg, client_recv_buf[0..@intCast(received)]);
 }

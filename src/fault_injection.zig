@@ -104,7 +104,7 @@ pub fn listenFn(injector: *FaultInjector, fd: i32, backlog: u32) !void {
     if (injector.enabled and injector.fail_listen) {
         return error.EAGAIN;
     }
-    return io_uring.Syscall.listen(fd, backlog);
+    return io_uring.Syscall.listen(fd, @as(i32, @intCast(backlog)));
 }
 
 /// 模拟磁盘写满（在 file_store 或 ssd_persist 中使用）
