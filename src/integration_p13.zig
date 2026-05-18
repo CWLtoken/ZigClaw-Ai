@@ -1,5 +1,4 @@
 const testing = @import("std").testing;
-const net = @import("net.zig");
 const io_uring = @import("io_uring.zig");
 const mem = @import("std").mem;
 
@@ -12,25 +11,25 @@ test "Phase13: io_uring ACCEPT + SEND via TCP loopback" {
     defer io_uring.Syscall.close(@as(i32, @intCast(listen_fd)));
 
     // 2. bind 127.0.0.1:0
-    var bind_addr = net.SockAddrIn{
+    var bind_addr = io_uring.Syscall.SockAddrIn{
         .family = 2,
         .port = 0,
         .addr = 0x0100007F,
     };
-    try io_uring.Syscall.bind(listen_fd, &bind_addr, @sizeOf(net.SockAddrIn));
+    try io_uring.Syscall.bind(listen_fd, &bind_addr, @sizeOf(io_uring.Syscall.SockAddrIn));
 
     // 3. listen
     try io_uring.Syscall.listen(listen_fd, 1);
 
     // 4. getsockname to get actual port
-    var actual_addr: net.SockAddrIn = undefined;
-    var addr_len: u32 = @sizeOf(net.SockAddrIn);
+    var actual_addr: io_uring.Syscall.SockAddrIn = undefined;
+    var addr_len: u32 = @sizeOf(io_uring.Syscall.SockAddrIn);
     try io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len);
-    const actual_port = io_uring.htons(actual_addr.port);
+    const actual_port = io_uring.Syscall.htons(actual_addr.port);
 
     // 5. submit ACCEPT via io_uring
-    var client_addr: net.SockAddrIn = undefined;
-    var client_addr_len: u32 = @sizeOf(net.SockAddrIn);
+    var client_addr: io_uring.Syscall.SockAddrIn = undefined;
+    var client_addr_len: u32 = @sizeOf(io_uring.Syscall.SockAddrIn);
     var sq_tail = @atomicLoad(u32, ring.sq_tail, .acquire);
     const sqe_a = &ring.sq_entries[sq_tail & ring.sq_ring_mask];
     sqe_a.* = .{
@@ -56,12 +55,12 @@ test "Phase13: io_uring ACCEPT + SEND via TCP loopback" {
     const connect_fd_i32 = try io_uring.Syscall.socket(2, 1, 0);
     const connect_fd: u32 = @intCast(connect_fd_i32);
     defer io_uring.Syscall.close(@as(i32, @intCast(connect_fd)));
-    var server_addr = net.SockAddrIn{
+    var server_addr = io_uring.Syscall.SockAddrIn{
         .family = 2,
-        .port = io_uring.htons(actual_port),
+        .port = io_uring.Syscall.htons(actual_port),
         .addr = 0x0100007F,
     };
-    try io_uring.Syscall.connect(@as(i32, @intCast(connect_fd)), &server_addr, @sizeOf(net.SockAddrIn));
+    try io_uring.Syscall.connect(@as(i32, @intCast(connect_fd)), &server_addr, @sizeOf(io_uring.Syscall.SockAddrIn));
 
     // 7. wait for ACCEPT completion
     const submitted_a = try io_uring.Syscall.enter(ring.fd, 1, 1, 0);

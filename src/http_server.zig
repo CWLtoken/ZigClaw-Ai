@@ -8,7 +8,6 @@ const log = @import("std").log;
 const mem = @import("std").mem;
 const linux = @import("std").os.linux;
 const io_uring = @import("io_uring.zig");
-const net = @import("net.zig");
 const reactor = @import("reactor.zig");
 const context = @import("context.zig");
 const middleware = @import("entry/middleware.zig");
@@ -169,9 +168,9 @@ pub const HttpServer = struct {
             return err;
         };
 
-        const listen_fd = net.socket(
-            net.AF_INET,
-            net.SOCK_STREAM,
+        const listen_fd = io_uring.Syscall.socket(
+            io_uring.Syscall.AF_INET,
+            io_uring.Syscall.SOCK_STREAM,
             0,
         ) catch |err| {
             log.err("socket 失败: {s}", .{@errorName(err)});
@@ -181,31 +180,31 @@ pub const HttpServer = struct {
         errdefer ring.deinit();
 
         // 绑定 0.0.0.0:listen_port（listen_port 为 0 时系统自动分配）
-        var addr = net.SockAddrIn{
-            .family = net.AF_INET,
-            .port = net.htons(listen_port),
+        var addr = io_uring.Syscall.SockAddrIn{
+            .family = io_uring.Syscall.AF_INET,
+            .port = io_uring.Syscall.htons(listen_port),
             .addr = 0, // 0.0.0.0
         };
-        net.bind(listen_fd, &addr, @sizeOf(net.SockAddrIn)) catch |err| {
+        io_uring.Syscall.bind(listen_fd, &addr, @sizeOf(io_uring.Syscall.SockAddrIn)) catch |err| {
             log.err("bind 失败: {s}", .{@errorName(err)});
-            net.close(@intCast(listen_fd));
+            io_uring.Syscall.close(@intCast(listen_fd));
             return err;
         };
-        net.listen(listen_fd, 128) catch |err| {
+        io_uring.Syscall.listen(listen_fd, 128) catch |err| {
             log.err("listen 失败: {s}", .{@errorName(err)});
-            net.close(@intCast(listen_fd));
+            io_uring.Syscall.close(@intCast(listen_fd));
             return err;
         };
 
         // 获取实际端口
-        var actual_addr: net.SockAddrIn = undefined;
-        var addr_len: u32 = @sizeOf(net.SockAddrIn);
-        net.getsockname(listen_fd, &actual_addr, &addr_len) catch |err| {
+        var actual_addr: io_uring.Syscall.SockAddrIn = undefined;
+        var addr_len: u32 = @sizeOf(io_uring.Syscall.SockAddrIn);
+        io_uring.Syscall.getsockname(listen_fd, &actual_addr, &addr_len) catch |err| {
             log.err("getsockname 失败: {s}", .{@errorName(err)});
-            net.close(@intCast(listen_fd));
+            io_uring.Syscall.close(@intCast(listen_fd));
             return err;
         };
-        const port = net.htons(actual_addr.port);
+        const port = io_uring.Syscall.htons(actual_addr.port);
 
         log.info("🌐 HTTP 服务器启动: http://127.0.0.1:{d}/", .{port});
         log.info("   路由：", .{});
@@ -248,7 +247,7 @@ pub const HttpServer = struct {
                     while (i < conn_count) {
                         if (now - conns[i].last_active > IDLE_TIMEOUT_MS) {
                             log.info("Connection {d} timed out", .{conns[i].stream_id});
-                            net.close(@intCast(conns[i].fd));
+                            io_uring.Syscall.close(@intCast(conns[i].fd));
                             self.metrics.dec_connections();
                             self.removeConn(&conns, &conn_count, i);
                         } else {
@@ -266,7 +265,7 @@ pub const HttpServer = struct {
                             // SEC-4: Rate Limiting 检查
                             if (!self.rate_limiter.allow()) {
                                 log.warn("Rate limit exceeded, closing connection", .{});
-                                net.close(@intCast(conn_fd));
+                                io_uring.Syscall.close(@intCast(conn_fd));
                                 continue;
                             }
 
@@ -294,7 +293,7 @@ pub const HttpServer = struct {
 
                                 self.reactor.prepare_recv(conn_fd, &conn.recv_iov, &conn.recv_req) catch |err| {
                                     log.err("提交 RECV 失败: {s}", .{@errorName(err)});
-                                    net.close(@intCast(conn.fd));
+                                    io_uring.Syscall.close(@intCast(conn.fd));
                                     self.metrics.dec_connections();
                                     conn_count -= 1;
                                     return;
@@ -302,7 +301,7 @@ pub const HttpServer = struct {
                             } else {
                                 // 连接数超限，直接关闭
                                 log.warn("连接数超限，关闭 fd={d}", .{conn_fd});
-                                net.close(@intCast(conn_fd));
+                                io_uring.Syscall.close(@intCast(conn_fd));
                                 self.metrics.dec_connections();
                             }
                         }
@@ -338,7 +337,7 @@ pub const HttpServer = struct {
                                     // SEC-5: 请求体大小限制
                                     if (ev.result > MAX_BODY_SIZE) {
                                         log.warn("Request body too large: {d} bytes", .{ev.result});
-                                        net.close(@intCast(conn.fd));
+                                        io_uring.Syscall.close(@intCast(conn.fd));
                                         self.metrics.dec_connections();
                                         self.removeConn(&conns, &conn_count, conn_idx);
                                         continue;
@@ -379,7 +378,7 @@ pub const HttpServer = struct {
                                     var send_req = io_uring.IoRequest{ .stream_id = conn.stream_id, .buf_ptr = null };
                                     self.reactor.prepare_send(conn.fd, &send_iov, &send_req) catch |err| {
                                         log.err("提交 SEND 失败: {s}\n", .{@errorName(err)});
-                                        net.close(@intCast(conn.fd));
+                                        io_uring.Syscall.close(@intCast(conn.fd));
                                         self.metrics.dec_connections();
                                         self.removeConn(&conns, &conn_count, conn_idx);
                                         return;
@@ -387,14 +386,14 @@ pub const HttpServer = struct {
                                     conn.state = .Send;
                                 } else {
                                     // 连接关闭或错误
-                                    net.close(@intCast(conn.fd));
+                                    io_uring.Syscall.close(@intCast(conn.fd));
                                     self.metrics.dec_connections();
                                     self.removeConn(&conns, &conn_count, conn_idx);
                                 }
                             },
                             .Send => {
                                 // SEND 完成：关闭连接
-                                net.close(@intCast(conn.fd));
+                                io_uring.Syscall.close(@intCast(conn.fd));
                                 self.metrics.dec_connections();
                                 self.removeConn(&conns, &conn_count, conn_idx);
                             },
@@ -408,7 +407,7 @@ pub const HttpServer = struct {
         log.info("服务器停止接受新连接\n", .{});
         // 关闭所有活跃连接
         for (0..conn_count) |i| {
-            net.close(@intCast(conns[i].fd));
+            io_uring.Syscall.close(@intCast(conns[i].fd));
         }
     }
 
@@ -542,7 +541,7 @@ pub const HttpServer = struct {
 
     /// 释放服务器资源
     pub fn deinit(self: *HttpServer) void {
-        net.close(@intCast(self.listen_fd));
+        io_uring.Syscall.close(@intCast(self.listen_fd));
         self.ring.deinit();
     }
 };

@@ -37,6 +37,7 @@ pub const Protocol = struct {
     body_pool: *storage.BodyBufferPool,
     state: State,
     active_stream_id: u64,
+    body_slot: ?storage.BodyBufferPool.SlotHandle = null,
 
     pub fn init(window: *storage.StreamWindow, body_pool: *storage.BodyBufferPool) io_uring.SyscallError!Protocol {
         return .{
@@ -45,6 +46,7 @@ pub const Protocol = struct {
             .body_pool = body_pool,
             .state = .Idle,
             .active_stream_id = 0,
+            .body_slot = null,
         };
     }
 
@@ -75,12 +77,14 @@ pub const Protocol = struct {
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
                                 const opt_write_slice = self.body_pool.get_write_slice(self.active_stream_id);
-                                if (opt_write_slice) |write_slice|
+                                if (opt_write_slice) |result|
                                 {
-                                    const dest_ptr = write_slice[0];
+                                    const dest_ptr = result[0];
+                                    const handle = result[1];
                                     const usize_consumed: usize = @intCast(consumed);
                                     @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
-                                    self.body_pool.advance(self.active_stream_id, consumed);
+                                    self.body_pool.advance(handle, consumed);
+                                    self.body_slot = handle;
                                 }
                                 else
                                 {
@@ -124,12 +128,14 @@ pub const Protocol = struct {
                             if (io.buf_ptr) |buf_ptr| {
                                 const src_ptr: [*]u8 = @ptrCast(buf_ptr);
                                 const opt_write_slice = self.body_pool.get_write_slice(self.active_stream_id);
-                                if (opt_write_slice) |write_slice|
+                                if (opt_write_slice) |result|
                                 {
-                                    const dest_ptr = write_slice[0];
+                                    const dest_ptr = result[0];
+                                    const handle = result[1];
                                     const usize_consumed: usize = @intCast(consumed);
                                     @memcpy(dest_ptr[0..usize_consumed], src_ptr[0..usize_consumed]);
-                                    self.body_pool.advance(self.active_stream_id, consumed);
+                                    self.body_pool.advance(handle, consumed);
+                                    self.body_slot = handle;
                                 }
                                 else
                                 {

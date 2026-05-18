@@ -13,7 +13,6 @@
 //   - 零堆分配（连接池在栈上，仅 WorkerContext 在堆上）
 
 const linux = @import("std").os.linux;
-const net = @import("net.zig");
 const c = @import("std").c;
 const mem = @import("std").mem;
 const fmt = @import("std").fmt;
@@ -399,7 +398,7 @@ pub const HttpServerMT = struct {
         errdefer page_alloc.free(contexts);
 
         for (0..num_workers) |i| {
-            const fd = io_uring.Syscall.socket(net.AF_INET, net.SOCK_STREAM, 0) catch |err| {
+            const fd = io_uring.Syscall.socket(io_uring.AF_INET, io_uring.SOCK_STREAM, 0) catch |err| {
                 log.err("Worker {d}: socket 失败: {s}", .{ i, @errorName(err) });
                 for (0..i) |j| io_uring.Syscall.close(@intCast(listen_fds[j]));
                 return err;
@@ -407,12 +406,12 @@ pub const HttpServerMT = struct {
 
             _ = setSocketOption(fd, SOL_SOCKET, SO_REUSEPORT, 1);
 
-            var addr = net.SockAddrIn{
-                .family = net.AF_INET,
+            var addr = io_uring.SockAddrIn{
+                .family = io_uring.AF_INET,
                 .port = io_uring.htons(port),
                 .addr = 0,
             };
-            io_uring.Syscall.bind(fd, &addr, @sizeOf(net.SockAddrIn)) catch |err| {
+            io_uring.Syscall.bind(fd, &addr, @sizeOf(io_uring.SockAddrIn)) catch |err| {
                 log.err("Worker {d}: bind 失败: {s}", .{ i, @errorName(err) });
                 io_uring.Syscall.close(@intCast(fd));
                 for (0..i) |j| io_uring.Syscall.close(@intCast(listen_fds[j]));
