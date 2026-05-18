@@ -96,7 +96,7 @@ pub const VectorIndex = struct {
 
         // PQ 已训练但本轮未重训（len > KSUB），对新向量单独编码
         if (self.pq_trained and self.len > KSUB) {
-            var code: [M]u8 = undefined;
+            var code: [M]u8 = [_]u8{0} ** M;
             self.encode_pq(&self.vectors[idx], &code);
             self.pq_codes[idx] = code;
         }
@@ -107,7 +107,7 @@ pub const VectorIndex = struct {
     // ========================================================================
 
     pub fn search(self: *const VectorIndex, query: *const [DIM]f32, top_k: u8) [MAX_VECTORS]u64 {
-        var results: [MAX_VECTORS]u64 = undefined;
+        var results: [MAX_VECTORS]u64 = [_]u64{0} ** MAX_VECTORS;
         @memset(&results, 0);
 
         if (self.len == 0) return results;
@@ -118,8 +118,8 @@ pub const VectorIndex = struct {
         }
 
         // 1. 粗量化：找到 nprobe 个最近桶
-        var probe_dists: [NLIST]f32 = undefined;
-        var probe_ids: [NLIST]usize = undefined;
+        var probe_dists: [NLIST]f32 = [_]f32{0} ** NLIST;
+        var probe_ids: [NLIST]usize = [_]usize{0} ** NLIST;
         for (0..NLIST) |i| {
             probe_dists[i] = sq_euclidean(query, &self.centroids[i]);
             probe_ids[i] = i;
@@ -135,19 +135,23 @@ pub const VectorIndex = struct {
         }
 
         // 2. 在 nprobe 个桶内做 PQ 近似距离搜索
-        var best_sims: [MAX_VECTORS]f32 = undefined;
-        var best_keys: [MAX_VECTORS]u64 = undefined;
+        var best_sims: [MAX_VECTORS]f32 = [_]f32{0} ** MAX_VECTORS;
+        var best_keys: [MAX_VECTORS]u64 = [_]u64{0} ** MAX_VECTORS;
         var count: u8 = 0;
 
         for (0..NPROBE) |p| {
             const list_id = probe_ids[p];
+            // P2-002: 边界校验 - 防止 list_id 越界
+            if (list_id >= NLIST) continue;
             for (0..self.list_lens[list_id]) |j| {
                 const vec_idx = self.inverted_lists[list_id][j];
+                // P2-002: 边界校验 - 防止 vec_idx 越界
+                if (vec_idx >= self.len) continue;
                 const key = self.keys[vec_idx];
 
-                var sim: f32 = undefined;
+                var sim: f32 = 0;
                 if (self.pq_trained) {
-                    var pq_buf: [M]u8 = undefined;
+                    var pq_buf: [M]u8 = [_]u8{0} ** M;
                     self.encode_pq_into(query, &pq_buf);
                     sim = self.pq_asymmetric_distance(query, &self.pq_codes[vec_idx]);
                 } else {
@@ -187,11 +191,11 @@ pub const VectorIndex = struct {
     // ========================================================================
 
     fn brute_search(self: *const VectorIndex, query: *const [DIM]f32, top_k: u8) [MAX_VECTORS]u64 {
-        var results: [MAX_VECTORS]u64 = undefined;
+        var results: [MAX_VECTORS]u64 = [_]u64{0} ** MAX_VECTORS;
         @memset(&results, 0);
 
-        var sims: [MAX_VECTORS]f32 = undefined;
-        var idxs: [MAX_VECTORS]usize = undefined;
+        var sims: [MAX_VECTORS]f32 = [_]f32{0} ** MAX_VECTORS;
+        var idxs: [MAX_VECTORS]usize = [_]usize{0} ** MAX_VECTORS;
         for (0..self.len) |i| {
             sims[i] = cosine_similarity(query, &self.vectors[i]);
             idxs[i] = i;
@@ -224,7 +228,7 @@ pub const VectorIndex = struct {
         }
 
         // K-Means 迭代
-        var assignments: [MAX_VECTORS]u8 = undefined;
+        var assignments: [MAX_VECTORS]u8 = [_]u8{0} ** MAX_VECTORS;
         for (0..KMEANS_ITERS) |_| {
             // 分配步骤：每个向量分配到最近的中心点
             for (0..self.len) |v| {
@@ -234,18 +238,19 @@ pub const VectorIndex = struct {
                     const d = sq_euclidean(&self.vectors[v], &self.centroids[c]);
                     if (d < best_d) {
                         best_d = d;
-                        best_c = @intCast(c);
+                        // P2-003: @intCast 前校验范围（c < NLIST <= 255，u8 安全）
+                        best_c = if (c <= 255) @intCast(c) else 0;
                     }
                 }
                 assignments[v] = best_c;
             }
 
             // 更新步骤：重新计算中心点
-            var sums: [NLIST][DIM]f32 = undefined;
+            var sums: [NLIST][DIM]f32 = [_][DIM]f32{[_]f32{0} ** DIM} ** NLIST;
             for (0..NLIST) |c| {
                 sums[c] = [_]f32{0} ** DIM;
             }
-            var counts: [NLIST]usize = undefined;
+            var counts: [NLIST]usize = [_]usize{0} ** NLIST;
             @memset(&counts, 0);
             for (0..self.len) |v| {
                 const c = assignments[v];
@@ -311,7 +316,7 @@ pub const VectorIndex = struct {
             }
 
             // K-Means 迭代
-            var assignments: [MAX_VECTORS]u8 = undefined;
+            var assignments: [MAX_VECTORS]u8 = [_]u8{0} ** MAX_VECTORS;
             for (0..KMEANS_ITERS) |_| {
                 // 分配
                 for (0..self.len) |v| {
@@ -327,18 +332,19 @@ pub const VectorIndex = struct {
                         );
                         if (d < best_d) {
                             best_d = d;
-                            best_k = @intCast(k);
+                            // P2-003: @intCast 前校验范围（k < KSUB <= 255，u8 安全）
+                            best_k = if (k <= 255) @intCast(k) else 0;
                         }
                     }
                     assignments[v] = best_k;
                 }
 
                 // 更新
-                var sums: [KSUB][DSUB]f32 = undefined;
+                var sums: [KSUB][DSUB]f32 = [_][DSUB]f32{[_]f32{0} ** DSUB} ** KSUB;
                 for (0..KSUB) |k| {
                     sums[k] = [_]f32{0} ** DSUB;
                 }
-                var counts: [KSUB]usize = undefined;
+                var counts: [KSUB]usize = [_]usize{0} ** KSUB;
                 @memset(&counts, 0);
                 for (0..self.len) |v| {
                     const k = assignments[v];
@@ -383,7 +389,8 @@ pub const VectorIndex = struct {
                 );
                 if (d < best_d) {
                     best_d = d;
-                    best_k = @intCast(k);
+                    // P2-003: @intCast 前校验范围
+                    best_k = if (k <= 255) @intCast(k) else 0;
                 }
             }
             code[m] = best_k;

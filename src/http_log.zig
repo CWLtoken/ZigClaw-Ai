@@ -16,7 +16,8 @@ pub fn logRequest(
     err_msg: ?[]const u8,
 ) void {
     // 栈上缓冲区（足够容纳JSON日志）
-    var buf: [512]u8 = undefined;
+    // P1-006: 零初始化，防止 fmt 失败时泄露栈上旧数据
+    var buf: [512]u8 = [_]u8{0} ** 512;
 
     // 构建JSON字符串
     const result = if (err_msg) |msg|

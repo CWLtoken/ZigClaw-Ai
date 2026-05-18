@@ -110,6 +110,8 @@ pub const StorageArena = struct {
     mu: atomic.Mutex align(64) = .unlocked,
 
     // --- SSD 快照状态 ---
+    // snap_version: 1/1 toggle only, do not change to monotonic counter
+    // 使用异或翻转(0↔1)而非递增计数器，避免溢出风险
     snap_version: u32,
     snap_path: [*:0]const u8,
 
@@ -334,16 +336,22 @@ pub const StorageArena = struct {
             io_uring.Syscall.O_RDWR | io_uring.Syscall.O_CREAT | io_uring.Syscall.O_TRUNC,
             0o644,
         ) catch |err| {
-            debug.print("storage_arena: openat 失败: {s}\n", .{@errorName(err)});
+            debug.print("storage_arena: FATAL openat 失败: {s}\n", .{@errorName(err)});
             return;
         };
         defer io_uring.Syscall.close(fd);
 
         // 提交写请求
-        _ = io_uring.write(fd, data.ptr, data.len) catch |err| {
-            debug.print("storage_arena: write 失败: {s}\n", .{@errorName(err)});
+        const written = io_uring.write(fd, data.ptr, data.len) catch |err| {
+            debug.print("storage_arena: FATAL write 失败: {s}\n", .{@errorName(err)});
             return;
         };
+
+        // P2-004: 检测部分写入
+        if (written != data.len) {
+            debug.print("storage_arena: FATAL partial write: expected {d}, got {d}\n", .{ data.len, written });
+            return;
+        }
 
         debug.print("storage_arena: 快照已写入 (version={d})\n", .{new_ver});
     }
@@ -360,8 +368,8 @@ pub const StorageArena = struct {
 // ============================================================================
 
 comptime {
-    debug.assert(@sizeOf(SnapHeader) == SNAP_HEADER_SIZE);
-    debug.assert(SNAP_FILE_SIZE == 8320);
+    if (@sizeOf(SnapHeader) != SNAP_HEADER_SIZE) @compileError("SnapHeader size mismatch");
+    if (SNAP_FILE_SIZE != 8320) @compileError("SNAP_FILE_SIZE mismatch");
 }
 
 // ============================================================================

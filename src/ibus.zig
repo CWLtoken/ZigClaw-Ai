@@ -174,22 +174,27 @@ pub fn readMetrics() feedback.AllMetrics {
 // ============================================================================
 
 pub fn formatBusStatus(buf: []u8) usize {
-    // 加锁读取所有指标快照
+    // P2-007: 使用 lock + defer unlock 替代 tryLock 循环，防止死锁
+    // 注意：这里按固定顺序加锁，避免死锁
     while (!g_entry_mu.tryLock()) {}
+    defer g_entry_mu.unlock();
     const entry = g_entry_metrics;
-    g_entry_mu.unlock();
+
     while (!g_orch_mu.tryLock()) {}
+    defer g_orch_mu.unlock();
     const orch = g_orch_metrics;
-    g_orch_mu.unlock();
+
     while (!g_exec_mu.tryLock()) {}
+    defer g_exec_mu.unlock();
     const exec = g_exec_metrics;
-    g_exec_mu.unlock();
+
     while (!g_router_mu.tryLock()) {}
+    defer g_router_mu.unlock();
     const router = g_router_metrics;
-    g_router_mu.unlock();
+
     while (!g_storage_mu.tryLock()) {}
+    defer g_storage_mu.unlock();
     const storage = g_storage_metrics;
-    g_storage_mu.unlock();
 
     const w = buf;
 
