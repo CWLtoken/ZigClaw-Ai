@@ -129,7 +129,19 @@ pub const Protocol = struct {
                     },
                 }
             },
-            .BodyDone => {},
+            .BodyDone => {
+                // 2审修复: BodyDone 状态验证数据完整性
+                // 确保 body 数据完整写入后再进入 BodyDone
+                const opt_header = self.window.access_header(self.active_stream_id);
+                if (opt_header) |header| {
+                    const remaining_u32 = mem.readInt(u32, header.data[8..12], .little);
+                    if (remaining_u32 != 0) {
+                        // 数据不完整，回退到 BodyRecv 状态
+                        self.state = .BodyRecv;
+                        return self.state;
+                    }
+                }
+            },
             .Error => {},
         }
         return self.state;
