@@ -51,7 +51,7 @@ test "Coordinator: 提交和完成" {
 
     // 用结构体封装结果数据
     const Result = struct {
-        buf: [4096]u8 = undefined,
+        buf: [4096]u8 = [_]u8{0} ** 4096,
         len: usize = 0,
     };
     var result = Result{};
@@ -62,6 +62,7 @@ test "Coordinator: 提交和完成" {
     const Callback = struct {
         fn callback(result_text: []const u8, user_data: ?*anyopaque) void {
             const r = @as(*Result, @ptrCast(@alignCast(user_data.?)));
+            if (result_text.len > r.buf.len) @panic("Callback result_text too large for Result.buf");
             @memcpy(r.buf[0..result_text.len], result_text);
             r.len = result_text.len;
         }

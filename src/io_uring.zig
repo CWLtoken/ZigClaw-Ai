@@ -156,26 +156,37 @@ pub const Ring = struct {
         };
 
         // === 阶段 4：映射 SQE 数组 ===
-        // 偏移量 IORING_OFF_SQES = 0x10000000
-        // 必须用 MAP_SHARED（内核共享），不能用 MAP_POPULATE（SQE 会 segfault）
-        // 注意：MAP_POPULATE=0x8000，0x20000 实际是 MAP_HUGETLB（会导致大页映射失败）
-        const sqes_raw = linux.syscall6(
-            .mmap,
-            @as(usize, 0), // addr = NULL
-            sqes_size,
-            @as(usize, 0x03), // PROT_READ | PROT_WRITE
-            @as(usize, 0x01), // MAP_SHARED only（SQE 禁用 MAP_POPULATE）
-            @as(usize, @intCast(@as(u32, @bitCast(fd)))),
-            @as(usize, 0x10000000), // IORING_OFF_SQES
-        );
-        if (sqes_raw == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED
+        // SEC-3：使用统一封装 Syscall.map_sqes，与 map_ring 风格一致
+        const sqes_ptr = if (Syscall.map_sqes(fd, sqes_size)) |val| val else |err| {
             Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
             Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
             Syscall.close(fd);
-            return SyscallError.MmapFailed;
+            return err;
+        };
+        const sqes_raw = @intFromPtr(sqes_ptr);
+
+        // === 阶段 5：运行时指针校验（P1-002）===
+        // 验证所有指针对齐与合法性，防止内核 params 被篡改导致任意内存访问
+        if (@intFromPtr(sqes_raw) % @alignOf(SqEntry) != 0) {
+            Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
+            Syscall.munmap(@intFromPtr(sq_ptr), sq_ring_size);
+            Syscall.munmap(sqes_raw, sqes_size);
+            Syscall.close(fd);
+            @panic("ZC-FATAL: sqes_raw misaligned");
+        }
+        if (@intFromPtr(sq_ptr) % @alignOf(u32) != 0) {
+            Syscall.munmap(@intFromPtr(cq_ptr), cq_ring_size);
+            Syscall.munmap(sqes_raw, sqes_size);
+            Syscall.close(fd);
+            @panic("ZC-FATAL: sq_ptr misaligned");
+        }
+        if (@intFromPtr(cq_ptr) % @alignOf(u32) != 0) {
+            Syscall.munmap(sqes_raw, sqes_size);
+            Syscall.close(fd);
+            @panic("ZC-FATAL: cq_ptr misaligned");
         }
 
-        // === 阶段 5：构造 Ring 结构体 ===
+        // === 阶段 6：构造 Ring 结构体 ===
         const sqes_aligned = @as([*]SqEntry, @ptrFromInt(sqes_raw));
         const sq_base: [*]u8 = @ptrCast(@as(?*anyopaque, sq_ptr));
         const sq_head_ptr: *u32 = @ptrCast(@alignCast(sq_base + params.sq_off.head));
@@ -269,7 +280,7 @@ pub const Syscall = struct {
         // Linux x86_64 UAPI: MAP_SHARED=0x01, MAP_POPULATE=0x8000
         const flags: usize = 0x01 | 0x8000; // MAP_SHARED | MAP_POPULATE
         const prot: usize = 0x1 | 0x2; // PROT_READ | PROT_WRITE (Linux x86_64 UAPI)
-        
+
         // 使用 syscall6 绕过 std.os.mmap，直接映射
         const ptr = linux.syscall6(
             .mmap,
@@ -281,6 +292,27 @@ pub const Syscall = struct {
             @as(usize, offset),
         );
         if (ptr == @as(usize, @bitCast(@as(isize, -1)))) { // MAP_FAILED (Linux x86_64)
+            return SyscallError.MmapFailed;
+        }
+        return @ptrFromInt(ptr);
+    }
+
+    /// 映射 SQE 数组（SEC-3 统一封装，与 map_ring 风格一致）
+    /// 使用 MAP_SHARED（SQE 禁用 MAP_POPULATE，否则 segfault）
+    /// 偏移量 IORING_OFF_SQES = 0x10000000
+    pub fn map_sqes(fd: u32, size: usize) SyscallError!*anyopaque {
+        const prot: usize = 0x03; // PROT_READ | PROT_WRITE
+        const flags: usize = 0x01; // MAP_SHARED only（SQE 禁用 MAP_POPULATE）
+        const ptr = linux.syscall6(
+            .mmap,
+            @as(usize, 0), // addr = NULL
+            size,
+            prot,
+            flags,
+            @as(usize, @intCast(@as(u32, @bitCast(fd)))),
+            @as(usize, 0x10000000), // IORING_OFF_SQES
+        );
+        if (ptr == @as(usize, @bitCast(@as(isize, -1)))) {
             return SyscallError.MmapFailed;
         }
         return @ptrFromInt(ptr);

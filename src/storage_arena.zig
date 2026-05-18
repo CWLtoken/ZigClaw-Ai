@@ -361,8 +361,8 @@ pub const StorageArena = struct {
 // ============================================================================
 
 comptime {
-    debug.assert(@sizeOf(SnapHeader) == SNAP_HEADER_SIZE);
-    debug.assert(SNAP_FILE_SIZE == 8320);
+    if (@sizeOf(SnapHeader) != SNAP_HEADER_SIZE) @compileError("SnapHeader size mismatch");
+    if (SNAP_FILE_SIZE != 8320) @compileError("SNAP_FILE_SIZE mismatch");
 }
 
 // ============================================================================
