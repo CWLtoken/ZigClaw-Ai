@@ -4,6 +4,7 @@
 
 const mem = @import("std").mem;
 const testing = @import("std").testing;
+const atomic = @import("std").atomic;
 
 /// 推理完成回调
 pub const InferenceCallback = *const fn (result: []const u8, user_data: ?*anyopaque) void;
@@ -17,21 +18,27 @@ pub const InferenceRequest = struct {
 };
 
 /// 协调器状态
+/// P1-005: 使用 atomic.Mutex 保护 pending 字段，防止多线程竞态
 pub const Coordinator = struct {
     pending: ?InferenceRequest,
+    mu: atomic.Mutex = .unlocked,
 
     pub fn init() Coordinator {
-        return .{ .pending = null };
+        return .{ .pending = null, .mu = .unlocked };
     }
 
-    /// 提交异步推理请求
+    /// 提交异步推理请求（P1-005: 加锁保护）
     pub fn submit(self: *Coordinator, req: InferenceRequest) !void {
+        while (!self.mu.tryLock()) {}
+        defer self.mu.unlock();
         if (self.pending != null) return error.Busy;
         self.pending = req;
     }
 
-    /// 推理完成，调用回调（由事件循环调用）
+    /// 推理完成，调用回调（由事件循环调用）（P1-005: 加锁保护）
     pub fn complete(self: *Coordinator, result: []const u8) bool {
+        while (!self.mu.tryLock()) {}
+        defer self.mu.unlock();
         if (self.pending) |req| {
             req.callback(result, req.user_data);
             self.pending = null;
@@ -40,8 +47,10 @@ pub const Coordinator = struct {
         return false;
     }
 
-    /// 检查是否有待处理的请求
+    /// 检查是否有待处理的请求（P1-005: 加锁保护）
     pub fn hasPending(self: *const Coordinator) bool {
+        while (!self.mu.tryLock()) {}
+        defer self.mu.unlock();
         return self.pending != null;
     }
 };

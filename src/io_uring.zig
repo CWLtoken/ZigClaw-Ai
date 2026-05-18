@@ -106,13 +106,22 @@ pub const Ring = struct {
     cq_ring_size: usize,
     sqes_ptr: usize,
     sqes_size: usize,
+    // P1-003: 已释放标志，防止 double-munmap
+    released: bool = false,
+
+    /// P1-003: 禁止复制 Ring（持有 mmap 资源，复制会导致 double-free）
+    pub const __no_copy = true;
 
     /// 释放所有资源：munmap 三块映射 + close fd
+    /// P1-003: 释放后设置 released 标志，防止 double-free
     pub fn deinit(self: *Ring) void {
+        if (self.released) return; // 已释放，直接返回
         Syscall.munmap(self.sq_ring_ptr, self.sq_ring_size);
         Syscall.munmap(self.cq_ring_ptr, self.cq_ring_size);
         Syscall.munmap(self.sqes_ptr, self.sqes_size);
         Syscall.close(self.fd);
+        self.released = true;
+        self.fd = 0xFFFFFFFF; // 无效 fd 标记
     }
 
     pub fn init() SyscallError!Ring {

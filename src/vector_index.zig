@@ -141,8 +141,12 @@ pub const VectorIndex = struct {
 
         for (0..NPROBE) |p| {
             const list_id = probe_ids[p];
+            // P2-002: 边界校验 - 防止 list_id 越界
+            if (list_id >= NLIST) continue;
             for (0..self.list_lens[list_id]) |j| {
                 const vec_idx = self.inverted_lists[list_id][j];
+                // P2-002: 边界校验 - 防止 vec_idx 越界
+                if (vec_idx >= self.len) continue;
                 const key = self.keys[vec_idx];
 
                 var sim: f32 = 0;
@@ -234,7 +238,8 @@ pub const VectorIndex = struct {
                     const d = sq_euclidean(&self.vectors[v], &self.centroids[c]);
                     if (d < best_d) {
                         best_d = d;
-                        best_c = @intCast(c);
+                        // P2-003: @intCast 前校验范围（c < NLIST <= 255，u8 安全）
+                        best_c = if (c <= 255) @intCast(c) else 0;
                     }
                 }
                 assignments[v] = best_c;
@@ -327,7 +332,8 @@ pub const VectorIndex = struct {
                         );
                         if (d < best_d) {
                             best_d = d;
-                            best_k = @intCast(k);
+                            // P2-003: @intCast 前校验范围（k < KSUB <= 255，u8 安全）
+                            best_k = if (k <= 255) @intCast(k) else 0;
                         }
                     }
                     assignments[v] = best_k;
@@ -383,7 +389,8 @@ pub const VectorIndex = struct {
                 );
                 if (d < best_d) {
                     best_d = d;
-                    best_k = @intCast(k);
+                    // P2-003: @intCast 前校验范围
+                    best_k = if (k <= 255) @intCast(k) else 0;
                 }
             }
             code[m] = best_k;
