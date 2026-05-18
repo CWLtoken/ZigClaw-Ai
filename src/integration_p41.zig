@@ -1,7 +1,6 @@
 // src/integration_p41.zig
 // ZigClaw V2.4 | 阶段23C | P41: 故障注入与恢复测试
 const http_server = @import("http_server.zig");
-const net = @import("net.zig");
 const io_uring = @import("io_uring.zig");
 const mem = @import("std").mem;
 const time = @import("std").time;
@@ -20,8 +19,8 @@ test "P41: ServerMetrics 错误计数递增" {
 test "P41: 客户端断开连接 - fd 不泄漏（简化）" {
     // 简化测试：验证 close 函数正常工作
     const fd = try io_uring.Syscall.socket(
-        net.AF_INET,
-        net.SOCK_STREAM,
+        io_uring.Syscall.AF_INET,
+        io_uring.Syscall.SOCK_STREAM,
         0,
     );
     

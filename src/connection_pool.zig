@@ -13,7 +13,6 @@
 //                        → Error → Idle
 
 const io_uring = @import("io_uring.zig");
-const net = @import("net.zig");
 const log = @import("std").log;
 
 /// 连接状态
@@ -35,7 +34,7 @@ pub const ConnSlot = struct {
     state: ConnState align(64) = .Idle,
     fd: i32 = -1,
     /// 后端地址
-    backend_addr: net.SockAddrIn = .{},
+    backend_addr: io_uring.Syscall.SockAddrIn = .{},
     /// 最后活跃时间（用于空闲超时）
     last_active: u64 = 0,
     /// 复用计数
@@ -131,7 +130,7 @@ pub const ConnectionPool = struct {
 
     /// 创建新连接（非阻塞）
     /// 返回槽位索引，如果池满返回 null
-    pub fn connect(self: *ConnectionPool, addr: net.SockAddrIn) ?u32 {
+    pub fn connect(self: *ConnectionPool, addr: io_uring.Syscall.SockAddrIn) ?u32 {
         // 查找空闲槽位
         const idx = self.findIdleSlot() orelse return null;
         var slot = &self.slots[idx];

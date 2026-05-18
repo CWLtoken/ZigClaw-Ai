@@ -117,8 +117,9 @@ pub const StorageArena = struct {
     pub fn init() StorageArena {
         var arena = @import("std").heap.ArenaAllocator.init(@import("std").heap.page_allocator);
         const allocator = arena.allocator();
-        const default_path = getDefaultSnapPath();
-        const snap_path = allocator.dupeZ(u8, mem.span(default_path)) catch @panic("snap_path alloc failed");
+        // btw: snap_path 直接使用 getenv 返回指针，避免 dupeZ 副本与 getenv 指针生命周期不一致
+        // 快照路径在进程生命周期内不会变化，无需复制
+        const snap_path = getDefaultSnapPath();
         return .{
             .arena = arena,
             .allocator = allocator,
@@ -126,7 +127,7 @@ pub const StorageArena = struct {
             .last_touch_ns = [_]u64{0} ** SLOT_COUNT,
             .mu = .unlocked,
             .snap_version = 0,
-            .snap_path = @ptrCast(snap_path.ptr),
+            .snap_path = snap_path,
         };
     }
 

@@ -171,8 +171,22 @@ pub fn incrUringWrite() void {
 }
 
 // P49：窗口槽位使用率（占位，后续从 io_uring 获取）
-pub var uring_sq_ring_used: atomic.Value(u32) = atomic.Value(u32).init(0);
-pub var uring_cq_ring_used: atomic.Value(u32) = atomic.Value(u32).init(0);
+pub var uring_sq_ring_used: AlignedAtomicU32 = AlignedAtomicU32.init(0);
+pub var uring_cq_ring_used: AlignedAtomicU32 = AlignedAtomicU32.init(0);
+
+// DEV-2: 运行时断言防止语义反转——已用槽位必须从 0 开始递增
+// 在 metrics 子系统首次使用时验证，防止未来重构再次反转语义
+var uring_metrics_validated: bool = false;
+fn validateUringMetricsInit() void {
+    if (uring_metrics_validated) return;
+    uring_metrics_validated = true;
+    const sq = uring_sq_ring_used.load(.acquire);
+    const cq = uring_cq_ring_used.load(.acquire);
+    // 初始值必须为 0（空闲），不能是满值
+    if (sq != 0 or cq != 0) {
+        @panic("uring_sq_ring_used/uring_cq_ring_used semantic inversion detected: must init to 0 (free), not full");
+    }
+}
 
 pub fn setSqRingUsed(n: u32) void {
     uring_sq_ring_used.store(n, .release);
@@ -211,6 +225,8 @@ pub const MetricsError = error{BufferTooSmall};
 pub fn formatMetrics(buf: []u8) MetricsError!usize {
     // 确保桶已初始化
     if (!buckets_initialized.load(.acquire)) initLatencyBuckets();
+    // DEV-2: 验证 uring 指标语义未反转
+    validateUringMetricsInit();
 
     const http = http_requests_total.load(.acquire);
     const auth = auth_failures_total.load(.acquire);
